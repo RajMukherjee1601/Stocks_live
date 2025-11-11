@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>NSE RSI Dashboard — Live (no DB)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root{--bg:#0b0f12;--panel:#12171c;--muted:#8b9aaa;--text:#eaf2fb;--row:#0e1318;--border:#1b232c;--chip:#1c2630;--green:#18b36b;--red:#ff5a5f}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,Inter,Segoe UI,Roboto,Arial;color:var(--text);
+         background:radial-gradient(1200px 1200px at 10% -10%,#142031,transparent 35%),var(--bg)}
+    header{position:sticky;top:0;z-index:5;background:linear-gradient(#0b0f12cc,#0b0f12e6 30%,#0b0f1200);backdrop-filter:blur(6px)}
+    .wrap{max-width:1200px;margin:0 auto;padding:20px}
+    h1{margin:0 0 6px 0;font-size:22px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:13px}
+    .chip{background:var(--chip);border:1px solid var(--border);border-radius:999px;padding:6px 10px}
+    .controls{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;padding:12px 0 18px}
+    .control{grid-column:span 4;display:flex;flex-direction:column;gap:6px}
+    label{font-size:12px;color:var(--muted)}
+    input,select,button{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;outline:none}
+    button{cursor:pointer;font-weight:600}
+    .primary{background:linear-gradient(180deg,#1552ff,#0047e1);border-color:#1e3ea8}
+    table{width:100%;border-collapse:separate;border-spacing:0;font-size:14px}
+    thead th{text-align:left;color:var(--muted);background:#0e141b;position:sticky;top:172px;border-bottom:1px solid var(--border);padding:10px 12px}
+    tbody tr{background:var(--row);border-bottom:1px solid var(--border)}
+    tbody tr:hover{background:#121a21}
+    td{padding:10px 12px;vertical-align:middle}
+    .num{text-align:right;font-variant-numeric:tabular-nums}
+    .ticker{font-weight:700;letter-spacing:.3px}
+    .badge{display:inline-flex;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:var(--chip);font-size:12px;color:var(--muted)}
+    .ob{color:var(--red);background:#241419;border-color:#372228}
+    .os{color:var(--green);background:#101e17;border-color:#1b2c22}
+    .loading{padding:24px;text-align:center;color:var(--muted)}
+    .spinner{width:18px;height:18px;border:2px solid #5b6b7c;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .panel{border:1px solid var(--border);border-radius:14px;overflow:hidden}
+    .footer{display:flex;justify-content:space-between;align-items:center;padding:12px;color:var(--muted);font-size:12px;border:1px solid var(--border);border-top:none;border-radius:0 0 14px 14px}
+    dialog{border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:14px;width:min(900px,92vw)}
+    dialog::backdrop{background:rgba(0,0,0,.6)}
+    .modal-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border)}
+    .modal-body{padding:14px 16px;height:280px}
+    .close{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:6px 10px;cursor:pointer}
+    @media (max-width:880px){.control{grid-column:span 6} thead th{top:210px}}
+    @media (max-width:520px){.control{grid-column:span 12} thead th{top:268px}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>NSE RSI Dashboard — Live</h1>
+      <div class="row">
+        <span class="chip">No DB • Pulls fresh data via backend `/api/rsi`</span>
+        <span class="chip">Click any row → RSI time-series</span>
+      </div>
+      <div class="controls">
+        <div class="control">
+          <label for="period">RSI period</label>
+          <input id="period" type="number" min="2" max="200" value="14"/>
+        </div>
+        <div class="control">
+          <label for="order">Sort</label>
+          <select id="order">
+            <option value="desc" selected>High → Low</option>
+            <option value="asc">Low → High</option>
+          </select>
+        </div>
+        <div class="control" style="grid-column:span 12">
+          <div class="row" style="gap:10px">
+            <label style="display:inline-flex;align-items:center;gap:6px">
+              <input id="onlyExtremes" type="checkbox"/> Only extremes (RSI &lt; 35 or &gt; 75)
+            </label>
+            <button id="refresh" class="primary">Refresh</button>
+            <span class="chip">Last updated: <span id="updated">—</span></span>
+            <span class="chip">Load time: <span id="elapsed">—</span></span>
+            <span class="chip" id="status">Ready</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:64px">#</th>
+            <th>Name</th>
+            <th>Ticker</th>
+            <th class="num">RSI</th>
+            <th>Status</th>
+            <th class="num">Close</th>
+            <th>Timestamp (IST)</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="7"><div class="loading"><span class="spinner"></span> Loading…</div></td></tr>
+        </tbody>
+      </table>
+      <div class="footer">
+        <div><strong id="count">0</strong> rows • Period <strong id="pOut">14</strong> • Order <strong id="oOut">desc</strong></div>
+        <div>Tip: change period or sort, then Refresh.</div>
+      </div>
+    </div>
+  </main>
+
+  <dialog id="modal">
+    <div class="modal-head">
+      <div>
+        <strong id="mTitle">RSI</strong>
+        <div style="color:var(--muted);font-size:12px" id="mSub">Time-series</div>
+      </div>
+      <button class="close" id="mClose">Close</button>
+    </div>
+    <div class="modal-body">
+      <canvas id="chart" height="240"></canvas>
+    </div>
+  </dialog>
+
+  <script>
+    // ---- Provided list (name → ticker). Keys must be unique. ----
+    const STOCKS = {
+      "Reliance Industries (RELIANCE.NS)": "RELIANCE.NS",
+      "TCS (TCS.NS)": "TCS.NS",
+      "HDFC Bank (HDFCBANK.NS)": "HDFCBANK.NS",
+      "ICICI Bank (ICICIBANK.NS)": "ICICIBANK.NS",
+      "Infosys (INFY.NS)": "INFY.NS",
+      "ITC (ITC.NS)": "ITC.NS",
+      "State Bank of India (SBIN.NS)": "SBIN.NS",
+      "Bharti Airtel (BHARTIARTL.NS)": "BHARTIARTL.NS",
+      "Hindustan Unilever (HINDUNILVR.NS)": "HINDUNILVR.NS",
+      "Larsen & Toubro (LT.NS)": "LT.NS",
+      "Axis Bank (AXISBANK.NS)": "AXISBANK.NS",
+      "Kotak Mahindra Bank (KOTAKBANK.NS)": "KOTAKBANK.NS",
+      "Bajaj Finance (BAJFINANCE.NS)": "BAJFINANCE.NS",
+      "Bajaj Finserv (BAJAJFINSV.NS)": "BAJAJFINSV.NS",
+      "Adani Enterprises (ADANIENT.NS)": "ADANIENT.NS",
+      "Adani Ports (ADANIPORTS.NS)": "ADANIPORTS.NS",
+      "Maruti Suzuki (MARUTI.NS)": "MARUTI.NS",
+      "Sun Pharma (SUNPHARMA.NS)": "SUNPHARMA.NS",
+      "Asian Paints (ASIANPAINT.NS)": "ASIANPAINT.NS",
+      "Mahindra & Mahindra (M&M.NS)": "M&M.NS",
+      "Tata Motors (TATAMOTORS.NS)": "TATAMOTORS.NS",
+      "NTPC (NTPC.NS)": "NTPC.NS",
+      "Power Grid (POWERGRID.NS)": "POWERGRID.NS",
+      "UltraTech Cement (ULTRACEMCO.NS)": "ULTRACEMCO.NS",
+      "JSW Steel (JSWSTEEL.NS)": "JSWSTEEL.NS",
+      "Tata Steel (TATASTEEL.NS)": "TATASTEEL.NS",
+      "Nestlé India (NESTLEIND.NS)": "NESTLEIND.NS",
+      "Titan (TITAN.NS)": "TITAN.NS",
+      "Tech Mahindra (TECHM.NS)": "TECHM.NS",
+      "Wipro (WIPRO.NS)": "WIPRO.NS",
+      "Grasim (GRASIM.NS)": "GRASIM.NS",
+      "Cipla (CIPLA.NS)": "CIPLA.NS",
+      "Divi's Laboratories (DIVISLAB.NS)": "DIVISLAB.NS",
+      "Dr. Reddy's (DRREDDY.NS)": "DRREDDY.NS",
+      "Britannia (BRITANNIA.NS)": "BRITANNIA.NS",
+      "Eicher Motors (EICHERMOT.NS)": "EICHERMOT.NS",
+      "Hero MotoCorp (HEROMOTOCO.NS)": "HEROMOTOCO.NS",
+      "Bajaj Auto (BAJAJ-AUTO.NS)": "BAJAJ-AUTO.NS",
+      "Tata Consumer (TATACONSUM.NS)": "TATACONSUM.NS",
+      "HDFC Life (HDFCLIFE.NS)": "HDFCLIFE.NS",
+      "SBI Life (SBILIFE.NS)": "SBILIFE.NS",
+      "ICICI Lombard (ICICIGI.NS)": "ICICIGI.NS",
+      "Hindalco (HINDALCO.NS)": "HINDALCO.NS",
+      "Coal India (COALINDIA.NS)": "COALINDIA.NS",
+      "ONGC (ONGC.NS)": "ONGC.NS",
+      "LTIMindtree (LTIM.NS)": "LTIM.NS",
+      "Apollo Hospitals (APOLLOHOSP.NS)": "APOLLOHOSP.NS",
+      "Avenue Supermarts (DMART.NS)": "DMART.NS",
+      "DLF (DLF.NS)": "DLF.NS",
+      "Godrej Consumer (GODREJCP.NS)": "GODREJCP.NS",
+      "BSE Limited (BSE.NS)": "BSE.NS",
+      "UPL (UPL.NS)": "UPL.NS",
+      "Dixon Technologies (DIXON.NS)": "DIXON.NS",
+      "Suzlon Energy (SUZLON.NS)": "SUZLON.NS",
+      "Coforge (COFORGE.NS)": "COFORGE.NS",
+      "Brigade Enterprises (BRIGADE.NS)": "BRIGADE.NS"
+    };
+
+    const NSE_TICKERS = Object.values(STOCKS);
+    const TICKER2NAME = Object.fromEntries(Object.entries(STOCKS).map(([name, tk]) => [tk, name]));
+
+    // ---- DOM helpers ----
+    const $  = (q, el=document) => el.querySelector(q);
+    const $$ = (q, el=document) => Array.from(el.querySelectorAll(q));
+    const fmt = (n,d=2)=> (n==null||Number.isNaN(n)) ? "—" : Number(n).toFixed(d);
+    const istOpts = { timeZone:"Asia/Kolkata", hour12:false, year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" };
+    const toIST = iso => { const d = new Date(iso); return isNaN(d) ? "—" : d.toLocaleString("en-IN", istOpts); };
+
+    // ---- Elements ----
+    const el = {
+      period: $("#period"), order: $("#order"), onlyExtremes: $("#onlyExtremes"),
+      refresh: $("#refresh"), tbody: $("#tbody"), count: $("#count"),
+      pOut: $("#pOut"), oOut: $("#oOut"), updated: $("#updated"), elapsed: $("#elapsed"),
+      status: $("#status"), modal: $("#modal"), mTitle: $("#mTitle"),
+      mSub: $("#mSub"), mClose: $("#mClose"), chart: $("#chart")
+    };
+
+    let chart = null;
+    function setStatus(s){ el.status.textContent = s; }
+
+    function rsiBadge(r){
+      if (r==null || Number.isNaN(r)) return '<span class="badge">—</span>';
+      if (r>75) return '<span class="badge ob">Overbought</span>';
+      if (r<35) return '<span class="badge os">Oversold</span>';
+      return '<span class="badge">Neutral</span>';
+    }
+
+    async function fetchSnapshot(){
+      setStatus("Fetching…");
+      el.tbody.innerHTML = '<tr><td colspan="7"><div class="loading"><span class="spinner"></span> Loading…</div></td></tr>';
+
+      const period = Math.max(2, Math.min(200, parseInt(el.period.value || "14", 10)));
+      const order  = (el.order.value || "desc").toLowerCase();
+      el.pOut.textContent = period; el.oOut.textContent = order;
+
+      const params = new URLSearchParams({ period:String(period), order });
+      params.set("_", Date.now()); // cache-buster
+
+      try {
+        const res = await fetch(`/api/rsi?${params.toString()}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "API error");
+
+        // Map backend rows by ticker
+        const byTk = new Map(json.data.map(r => [r.ticker, r]));
+        // Build display rows: keep backend order, then append any missing tickers
+        const ordered = [...json.data.map(r => r.ticker)];
+        for (const tk of NSE_TICKERS) if (!byTk.has(tk)) ordered.push(tk);
+
+        // Optionally filter extremes
+        const rows = ordered
+          .map(tk => byTk.get(tk) || { ticker: tk, timestamp: "", close: null, rsi: null, extreme: false })
+          .filter(r => el.onlyExtremes.checked ? (r.extreme || (r.rsi!=null && (r.rsi<35 || r.rsi>75))) : true);
+
+        renderTable(rows);
+        el.count.textContent = rows.length;
+        el.updated.textContent = new Date().toLocaleString("en-IN", istOpts);
+        el.elapsed.textContent = (json.elapsed_ms != null ? json.elapsed_ms + " ms" : "—");
+        setStatus("OK");
+      } catch (e) {
+        el.tbody.innerHTML = `<tr><td colspan="7"><div class="loading">❌ ${e.message}</div></td></tr>`;
+        setStatus("Error");
+      }
+    }
+
+    function renderTable(rows){
+      if (!rows.length){
+        el.tbody.innerHTML = '<tr><td colspan="7"><div class="loading">No data</div></td></tr>'; return;
+      }
+      el.tbody.innerHTML = rows.map((r,i)=>`
+        <tr data-ticker="${r.ticker}">
+          <td>${i+1}</td>
+          <td>${TICKER2NAME[r.ticker] || r.ticker}</td>
+          <td class="ticker">${r.ticker}</td>
+          <td class="num">${fmt(r.rsi)}</td>
+          <td>${rsiBadge(r.rsi)}</td>
+          <td class="num">${fmt(r.close,2)}</td>
+          <td>${toIST(r.timestamp)}</td>
+        </tr>
+      `).join("");
+
+      // click → open series
+      $$("#tbody tr").forEach(tr => tr.addEventListener("click", ()=>{
+        const tk = tr.getAttribute("data-ticker");
+        if (tk) openSeriesModal(tk, parseInt(el.period.value || "14", 10));
+      }));
+    }
+
+    async function openSeriesModal(ticker, period){
+      el.mTitle.textContent = `RSI • ${ticker}`;
+      el.mSub.textContent = `Time-series (period ${period})`;
+      el.modal.showModal();
+
+      const params = new URLSearchParams({ ticker, period:String(Math.max(2, Math.min(200, period))) });
+      params.set("_", Date.now());
+
+      try {
+        const res = await fetch(`/api/rsi?${params.toString()}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "API error");
+        drawChart(json.data.map(p=>p.timestamp), json.data.map(p=>p.rsi), ticker);
+      } catch (e) {
+        drawChart([], [], ticker, e.message);
+      }
+    }
+
+    function drawChart(xs, ys, ticker, err){
+      if (chart){ chart.destroy(); chart = null; }
+      const ctx = el.chart.getContext("2d");
+      if (err){
+        ctx.clearRect(0,0,el.chart.width,el.chart.height);
+        ctx.fillStyle = "#8b9aaa";
+        ctx.font = "14px system-ui";
+        ctx.fillText(`Error: ${err}`, 12, 22);
+        return;
+      }
+      chart = new Chart(ctx, {
+        type: "line",
+        data: { labels: xs, datasets: [{ label:`RSI (${ticker})`, data: ys, tension:.25, pointRadius:0, borderWidth:2 }] },
+        options: {
+          responsive:true, maintainAspectRatio:false,
+          scales:{ x:{ ticks:{ display:false }, grid:{ display:false } }, y:{ min:0, max:100 } },
+          plugins:{ legend:{ display:false }, tooltip:{ mode:"index", intersect:false } }
+        }
+      });
+    }
+
+    // Wire up
+    $("#refresh").addEventListener("click", fetchSnapshot);
+    $("#mClose").addEventListener("click", ()=> el.modal.close());
+
+    // Init
+    fetchSnapshot();
+  </script>
+</body>
+</html>

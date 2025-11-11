@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Stocks ML — NSE Hourly (1y) • Train 5 Models • Forecast 3h</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight">Stocks ML Dashboard (NSE)</h1>
+      <p class="text-slate-600 mt-1">
+        Ingest <span class="font-medium">1-year hourly</span> OHLCV (chunked), train <span class="font-medium">5 models</span> (5th = Backprop MLP),
+        see accuracies, and forecast the <span class="font-medium">next 3 hours</span>.
+      </p>
+    </header>
+
+    <!-- Controls -->
+    <section class="mb-6">
+      <div class="flex flex-col md:flex-row gap-3 items-start md:items-end">
+        <label class="w-full md:w-auto">
+          <span class="block text-sm font-medium text-slate-700">Ticker (NSE)</span>
+          <select id="tickerSelect"
+                  class="mt-1 block w-80 rounded-xl border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-3 py-2"></select>
+        </label>
+
+        <button id="btnIngest"
+                class="rounded-xl bg-slate-900 text-white px-4 py-2 shadow hover:bg-slate-800 active:scale-[.99] disabled:opacity-50">
+          Ingest 1y Hourly
+        </button>
+
+        <button id="btnPredict"
+                class="rounded-xl bg-indigo-600 text-white px-4 py-2 shadow hover:bg-indigo-500 active:scale-[.99] disabled:opacity-50">
+          Train & Predict (3h)
+        </button>
+
+        <button id="btnLatest"
+                class="rounded-xl bg-slate-200 text-slate-900 px-4 py-2 shadow hover:bg-slate-300 active:scale-[.99] disabled:opacity-50">
+          Load Latest Predictions
+        </button>
+        <a href="/rsi"
+   class="rounded-xl bg-amber-500 text-white px-4 py-2 shadow hover:bg-amber-400 active:scale-[.99]">
+  Open RSI Viewer
+</a>
+
+        <div id="spinner" class="hidden flex items-center gap-2 text-sm text-slate-600">
+          <svg class="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor"
+                  d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+          </svg>
+          <span id="spinnerText">Working…</span>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500 mt-2">
+        Works best with liquid names like Reliance, TCS, HDFC Bank, ICICI Bank, Infosys, etc.
+      </p>
+    </section>
+
+    <!-- Status / Toast -->
+    <section class="mb-6" id="statusBox" aria-live="polite"></section>
+
+    <!-- Best Model -->
+    <section id="bestModelCard" class="hidden mb-6">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 class="text-lg font-semibold mb-2">Best Model</h2>
+        <p class="text-slate-700">
+          <span class="font-bold" id="bestModelName"></span>
+          <span class="text-slate-500"> (chosen by lowest RMSE)</span>
+        </p>
+        <p class="text-xs text-slate-500 mt-1" id="generatedAt"></p>
+      </div>
+    </section>
+
+    <!-- Accuracy Table -->
+    <section id="metricsSection" class="hidden mb-6">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 class="text-lg font-semibold mb-4">Accuracy — All 5 Models</h2>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead>
+              <tr class="text-left text-slate-600 border-b">
+                <th class="py-2 pr-4">Model</th>
+                <th class="py-2 pr-4">MAE</th>
+                <th class="py-2 pr-4">RMSE</th>
+                <th class="py-2 pr-4">MAPE&nbsp;(%)</th>
+                <th class="py-2 pr-4">R²</th>
+              </tr>
+            </thead>
+            <tbody id="metricsTbody"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">
+          Models: 1) Linear Regression, 2) Ridge, 3) Random Forest, 4) Gradient Boosting, 5) <span class="font-medium">MLP (Backpropagation)</span>
+        </p>
+      </div>
+    </section>
+
+    <!-- Predictions -->
+    <section id="predsSection" class="hidden mb-6">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 class="text-lg font-semibold mb-4">Next 3 Hours — Predicted Close</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <ul id="predsList" class="space-y-2"></ul>
+          </div>
+          <div>
+            <canvas id="predChart" height="220"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Sentinel News (24h) -->
+<section class="mb-6">
+  <div class="flex items-center gap-3 mb-2">
+    <button id="btnNews"
+            class="rounded-xl bg-indigo-600 text-white px-4 py-2 shadow hover:bg-indigo-500 active:scale-[.99]">
+      Fetch News (24h)
+    </button>
+    <span class="text-xs text-slate-500">
+      India market-moving headlines + selected stock (from the dropdown).
+    </span>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <h3 class="text-sm font-semibold text-slate-700 mb-1">India market-moving news</h3>
+      <ul id="marketNews" class="space-y-3"></ul>
+    </div>
+    <div>
+      <h3 class="text-sm font-semibold text-slate-700 mb-1">Selected stock (last 24h)</h3>
+      <ul id="stockNews" class="space-y-3"></ul>
+    </div>
+  </div>
+</section>
+
+
+    <footer class="mt-10 text-xs text-slate-500">
+      <p>5th model uses a backpropagation MLP (hidden layers 64→32, ReLU, Adam). Data is hourly OHLCV from yfinance (1y, chunked) stored in MongoDB.</p>
+    </footer>
+  </div>
+
+  <script>
+
+  // =============== Sentinel News ===============
+const renderNewsItem = (it) => {
+  const li = document.createElement("li");
+  li.className = "rounded-xl border border-slate-200 bg-white p-3";
+  const ts = it.published ? new Date(it.published).toLocaleString() : "";
+  const senti = it.sentiment?.label || "Neutral";
+  const sentiCls =
+    senti === "Positive" ? "text-emerald-700" :
+    (senti === "Negative" ? "text-rose-700" : "text-slate-600");
+  const impacted = Array.isArray(it.likely_impacted) && it.likely_impacted.length
+    ? `<div class="text-xs mt-1">Likely impacted: ${it.likely_impacted.join(", ")}</div>` : "";
+
+  li.innerHTML = `
+    <a class="font-medium hover:underline" href="${it.link}" target="_blank" rel="noopener">${it.title}</a>
+    <div class="text-xs text-slate-500 mt-1">${it.source || ""}${ts ? " · " + ts : ""}</div>
+    <div class="text-xs mt-1">Sentiment: <span class="${sentiCls}">${senti}${
+      (it.sentiment && Number.isFinite(it.sentiment.score)) ? ` (${it.sentiment.score})` : ""
+    }</span></div>
+    ${impacted}
+  `;
+  return li;
+};
+
+const renderNewsList = (sel, items) => {
+  const ul = document.querySelector(sel);
+  ul.innerHTML = "";
+  if (!items || !items.length) {
+    ul.innerHTML = `<li class="text-xs text-slate-500 italic">No headlines found in the last 24 hours.</li>`;
+    return;
+  }
+  items.forEach(it => ul.appendChild(renderNewsItem(it)));
+};
+
+const loadNews = async () => {
+  setBusy(true, "Fetching news…");
+  try {
+    const tkr = getTicker(); // uses your existing dropdown
+    const [mRes, sRes] = await Promise.all([
+      fetch(`${API_BASE}/api/news/market`),
+      fetch(`${API_BASE}/api/news/stock?ticker=${encodeURIComponent(tkr)}`)
+    ]);
+    const m = await mRes.json();
+    const s = await sRes.json();
+    if (!m.ok) throw new Error("Market news error");
+    if (!s.ok) throw new Error(s.error || "Stock news error");
+    renderNewsList("#marketNews", m.items);
+    renderNewsList("#stockNews", s.items);
+    if ((m.impacted_all || []).length) {
+      status(`Market movers today may impact: ${m.impacted_all.join(", ")}`, "info");
+    } else {
+      status("News updated.", "success");
+    }
+  } catch (e) {
+    console.error(e);
+    status(`News error: ${e.message}`, "error");
+  } finally {
+    setBusy(false);
+  }
+};
+
+    // =============== API base detection ===============
+    // If served via Flask (http/https), use same-origin.
+    // If opened directly (file://), fall back to localhost:5000 where Flask runs.
+    const API_BASE = /^http(s)?:\/\//.test(location.origin) ? "" : "http://localhost:5000";
+
+    // =============== NSE Ticker Map (Label -> Symbol) ===============
+    const STOCKS = {
+      "Reliance Industries (RELIANCE.NS)": "RELIANCE.NS",
+      "TCS (TCS.NS)": "TCS.NS",
+      "HDFC Bank (HDFCBANK.NS)": "HDFCBANK.NS",
+      "ICICI Bank (ICICIBANK.NS)": "ICICIBANK.NS",
+      "Infosys (INFY.NS)": "INFY.NS",
+      "ITC (ITC.NS)": "ITC.NS",
+      "State Bank of India (SBIN.NS)": "SBIN.NS",
+      "Bharti Airtel (BHARTIARTL.NS)": "BHARTIARTL.NS",
+      "Hindustan Unilever (HINDUNILVR.NS)": "HINDUNILVR.NS",
+      "Larsen & Toubro (LT.NS)": "LT.NS",
+      "Axis Bank (AXISBANK.NS)": "AXISBANK.NS",
+      "Kotak Mahindra Bank (KOTAKBANK.NS)": "KOTAKBANK.NS",
+      "Bajaj Finance (BAJFINANCE.NS)": "BAJFINANCE.NS",
+      "Bajaj Finserv (BAJAJFINSV.NS)": "BAJAJFINSV.NS",
+      "Adani Enterprises (ADANIENT.NS)": "ADANIENT.NS",
+      "Adani Ports (ADANIPORTS.NS)": "ADANIPORTS.NS",
+      "Maruti Suzuki (MARUTI.NS)": "MARUTI.NS",
+      "Sun Pharma (SUNPHARMA.NS)": "SUNPHARMA.NS",
+      "Asian Paints (ASIANPAINT.NS)": "ASIANPAINT.NS",
+      "Mahindra & Mahindra (M&M.NS)": "M&M.NS",
+      "Tata Motors (TATAMOTORS.NS)": "TATAMOTORS.NS",
+      "NTPC (NTPC.NS)": "NTPC.NS",
+      "Power Grid (POWERGRID.NS)": "POWERGRID.NS",
+      "UltraTech Cement (ULTRACEMCO.NS)": "ULTRACEMCO.NS",
+      "JSW Steel (JSWSTEEL.NS)": "JSWSTEEL.NS",
+      "Tata Steel (TATASTEEL.NS)": "TATASTEEL.NS",
+      "Nestlé India (NESTLEIND.NS)": "NESTLEIND.NS",
+      "Titan (TITAN.NS)": "TITAN.NS",
+      "Tech Mahindra (TECHM.NS)": "TECHM.NS",
+      "Wipro (WIPRO.NS)": "WIPRO.NS",
+      "Grasim (GRASIM.NS)": "GRASIM.NS",
+      "Cipla (CIPLA.NS)": "CIPLA.NS",
+      "Divi's Laboratories (DIVISLAB.NS)": "DIVISLAB.NS",
+      "Dr. Reddy's (DRREDDY.NS)": "DRREDDY.NS",
+      "Britannia (BRITANNIA.NS)": "BRITANNIA.NS",
+      "Eicher Motors (EICHERMOT.NS)": "EICHERMOT.NS",
+      "Hero MotoCorp (HEROMOTOCO.NS)": "HEROMOTOCO.NS",
+      "Bajaj Auto (BAJAJ-AUTO.NS)": "BAJAJ-AUTO.NS",
+      "Tata Consumer (TATACONSUM.NS)": "TATACONSUM.NS",
+      "HDFC Life (HDFCLIFE.NS)": "HDFCLIFE.NS",
+      "SBI Life (SBILIFE.NS)": "SBILIFE.NS",
+      "ICICI Lombard (ICICIGI.NS)": "ICICIGI.NS",
+      "Hindalco (HINDALCO.NS)": "HINDALCO.NS",
+      "Coal India (COALINDIA.NS)": "COALINDIA.NS",
+      "ONGC (ONGC.NS)": "ONGC.NS",
+      "LTIMindtree (LTIM.NS)": "LTIM.NS",
+      "Apollo Hospitals (APOLLOHOSP.NS)": "APOLLOHOSP.NS",
+      "Avenue Supermarts (DMART.NS)": "DMART.NS",
+      "DLF (DLF.NS)": "DLF.NS",
+      "Godrej Consumer (GODREJCP.NS)": "GODREJCP.NS",
+      "BSE Limited (BSE.NS)": "BSE.NS",
+      "UPL (UPL.NS)": "UPL.NS",
+      "Dixon Technologies (DIXON.NS)": "DIXON.NS",
+      "Suzlon Energy (SUZLON.NS)": "SUZLON.NS",
+      "Coforge (COFORGE.NS)": "COFORGE.NS",
+      "Brigade Enterprises (BRIGADE.NS)": "BRIGADE.NS"
+      // (JSW Steel duplicate omitted — map keys must be unique)
+    };
+
+    // =============== Tiny helpers ===============
+    const $ = (sel) => document.querySelector(sel);
+    const el = (tag, cls, text) => {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+    const fmt = (v, digits = 4) => {
+      if (v === null || v === undefined || Number.isNaN(v)) return "—";
+      const num = Number(v);
+      if (!Number.isFinite(num)) return "—";
+      return num.toLocaleString(undefined, { maximumFractionDigits: digits });
+    };
+    const show = (sel) => $(sel).classList.remove("hidden");
+    const hide = (sel) => $(sel).classList.add("hidden");
+
+    const setBusy = (busy, text = "Working…") => {
+      $("#spinnerText").textContent = text;
+      $("#spinner").classList.toggle("hidden", !busy);
+      ["#btnIngest", "#btnPredict", "#btnLatest", "#tickerSelect"].forEach(s => {
+        $(s).disabled = busy;
+      });
+    };
+
+    const status = (msg, type = "info") => {
+      const box = $("#statusBox");
+      const base = "rounded-xl px-4 py-3 shadow border text-sm mb-3";
+      const palette = {
+        info: "bg-sky-50 border-sky-200 text-sky-900",
+        success: "bg-emerald-50 border-emerald-200 text-emerald-900",
+        warn: "bg-amber-50 border-amber-200 text-amber-900",
+        error: "bg-rose-50 border-rose-200 text-rose-900",
+      };
+      const card = el("div", base + " " + (palette[type] || palette.info));
+      card.textContent = msg;
+      box.prepend(card);
+    };
+
+    // =============== Dropdown builder ===============
+    const buildTickerDropdown = () => {
+      const sel = $("#tickerSelect");
+      sel.innerHTML = "";
+      for (const [label, symbol] of Object.entries(STOCKS)) {
+        const opt = document.createElement("option");
+        opt.value = symbol;
+        opt.textContent = label;
+        sel.appendChild(opt);
+      }
+      // default selection
+      sel.value = "RELIANCE.NS";
+    };
+
+    // =============== Renderers ===============
+    const renderMetrics = (metrics, bestModelName, generatedAtIso = null) => {
+      const tbody = $("#metricsTbody");
+      tbody.innerHTML = "";
+      const rows = Object.entries(metrics).sort((a, b) => a[0].localeCompare(b[0]));
+      rows.forEach(([model, m]) => {
+        const tr = el("tr", "border-b last:border-0");
+        const isBest = model === bestModelName;
+        const tdName = el("td", "py-2 pr-4 font-medium" + (isBest ? " text-indigo-700" : ""), model);
+        const tdMAE  = el("td", "py-2 pr-4", fmt(m.MAE, 4));
+        const tdRMSE = el("td", "py-2 pr-4", fmt(m.RMSE, 4));
+        const tdMAPE = el("td", "py-2 pr-4", fmt(m.MAPE_percent, 2));
+        const tdR2   = el("td", "py-2 pr-4", fmt(m.R2, 4));
+        tr.append(tdName, tdMAE, tdRMSE, tdMAPE, tdR2);
+        tbody.append(tr);
+      });
+
+      $("#bestModelName").textContent = bestModelName || "—";
+      $("#generatedAt").textContent = generatedAtIso ? `Generated at: ${new Date(generatedAtIso).toLocaleString()}` : "";
+      show("#bestModelCard");
+      show("#metricsSection");
+    };
+
+    let chart;
+    const renderPredictions = (preds) => {
+      const list = $("#predsList");
+      list.innerHTML = "";
+
+      const labels = [];
+      const values = [];
+
+      preds.forEach(p => {
+        const when = new Date(p.for_timestamp);
+        const li = el("li", "rounded-xl bg-slate-100 px-3 py-2");
+        li.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="text-slate-700">
+              <span class="text-xs text-slate-500">T+${p.horizon_hours_ahead}h</span>
+              <div class="text-sm font-medium">${when.toLocaleString()}</div>
+            </div>
+            <div class="text-right text-slate-900 font-semibold">${fmt(p.predicted_close, 4)}</div>
+          </div>
+        `;
+        list.append(li);
+
+        labels.push(when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        values.push(p.predicted_close);
+      });
+
+      const ctx = $("#predChart");
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label: "Predicted Close (Next 3 Hours)",
+            data: values,
+            fill: false,
+            tension: 0.25
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: true } },
+          scales: {
+            x: { title: { display: true, text: "Time (local)" } },
+            y: { title: { display: true, text: "Price" }, beginAtZero: false }
+          }
+        }
+      });
+
+      show("#predsSection");
+    };
+
+    // =============== API ===============
+    const getTicker = () => {
+      const v = $("#tickerSelect").value;
+      if (!v) throw new Error("Please choose a ticker.");
+      return v;
+    };
+
+    const ingest = async () => {
+      const ticker = getTicker();
+      setBusy(true, `Ingesting 1y hourly data for ${ticker}…`);
+      try {
+        const r = await fetch(`${API_BASE}/api/ingest?ticker=${encodeURIComponent(ticker)}`);
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || "Ingest failed.");
+        status(`Ingested ${j.rows_in_chunked_frame} rows for ${j.ticker}.`, "success");
+      } catch (e) {
+        console.error(e);
+        status(`Ingest error: ${e.message}. Check that Flask is running and CORS/same-origin is OK.`, "error");
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    const predict = async () => {
+      const ticker = getTicker();
+      setBusy(true, `Training 5 models & forecasting next 3 hours for ${ticker}…`);
+      try {
+        const r = await fetch(`${API_BASE}/api/predict?ticker=${encodeURIComponent(ticker)}`);
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || "Prediction failed.");
+
+        renderMetrics(j.metrics, j.best_model, new Date().toISOString());
+        renderPredictions(j.predictions_next_3_hours);
+        status(`Best model for ${j.ticker}: ${j.best_model}. Forecast ready.`, "success");
+      } catch (e) {
+        console.error(e);
+        status(`Predict error: ${e.message}`, "error");
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    const loadLatest = async () => {
+      const ticker = getTicker();
+      setBusy(true, `Loading latest saved predictions for ${ticker}…`);
+      try {
+        const r = await fetch(`${API_BASE}/api/predictions?ticker=${encodeURIComponent(ticker)}`);
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || "No saved predictions found.");
+
+        const d = j.data;
+        renderMetrics(d.all_metrics, d.best_model, d.generated_at);
+        renderPredictions(d.predictions);
+        status(`Loaded latest predictions for ${d.ticker}.`, "info");
+      } catch (e) {
+        console.error(e);
+        status(`Load latest error: ${e.message}`, "error");
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    // =============== Events & Init ===============
+   document.addEventListener("DOMContentLoaded", () => {
+  buildTickerDropdown();
+  $("#btnIngest").addEventListener("click", ingest);
+  $("#btnPredict").addEventListener("click", predict);
+  $("#btnLatest").addEventListener("click", loadLatest);
+
+  // News
+  $("#btnNews").addEventListener("click", loadNews);
+  $("#tickerSelect").addEventListener("change", async () => {
+    try {
+      const tkr = getTicker();
+      const r = await fetch(`${API_BASE}/api/news/stock?ticker=${encodeURIComponent(tkr)}`);
+      const j = await r.json();
+      if (j.ok) renderNewsList("#stockNews", j.items);
+    } catch {}
+  });
+
+  // >>> add this:
+  loadNews();
+});
+
+
+  </script>
+</body>
+</html>

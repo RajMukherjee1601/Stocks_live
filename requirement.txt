@@ -1,0 +1,8 @@
+Flask
+Flask-Cors
+Flask-PyMongo
+pymongo
+scikit-learn
+pandas
+numpy
+yfinance
