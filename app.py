@@ -810,6 +810,94 @@ def api_news_stock():
     return {"ok": True, "ticker": ticker, **payload}
 
 
+@app.route("/live")
+def serve_live_page():
+    # make sure templates/live.html exists (see next section)
+    return app.send_static_file("live.html")
+
+
+@app.route("/api/live_price", methods=["GET"])
+def api_live_price():
+    """
+    Return recent intraday prices (live-ish) for a given ticker from Yahoo Finance.
+
+    Query params:
+      ticker   = symbol like RELIANCE.NS (required)
+      period   = yfinance period (default: 1d)
+      interval = yfinance interval (default: 5m)
+
+    Response:
+      {
+        ok: True/False,
+        ticker: "...",
+        last_price: float,
+        last_timestamp: ISO string,
+        data: [
+          {timestamp, open, high, low, close, volume},
+          ...
+        ]
+      }
+    """
+    from flask import request
+
+    ticker = (request.args.get("ticker") or "").strip().upper()
+    if not ticker:
+        return jsonify({"ok": False, "error": "Missing ticker parameter"}), 400
+
+    period = (request.args.get("period") or "1d").lower()
+    interval = (request.args.get("interval") or "5m").lower()
+
+    try:
+        df = yf.download(
+            tickers=[ticker],
+            period=period,
+            interval=interval,
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+            group_by="ticker"
+        )
+
+        # When single ticker, df can be plain columns or MultiIndex, handle both
+        if isinstance(df.columns, pd.MultiIndex):
+            df = df[ticker]
+
+        if df is None or df.empty:
+            return jsonify({"ok": False, "error": "No price data returned"}), 404
+
+        df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+        df.dropna(subset=["Close"], inplace=True)
+
+        rows = []
+        for ts, row in df.iterrows():
+            if ts.tz is None:
+                ts = ts.tz_localize(timezone.utc)
+            else:
+                ts = ts.tz_convert(timezone.utc)
+            rows.append({
+                "timestamp": ts.isoformat(),
+                "open": float(row["Open"]),
+                "high": float(row["High"]),
+                "low": float(row["Low"]),
+                "close": float(row["Close"]),
+                "volume": float(row["Volume"]) if not math.isnan(row["Volume"]) else 0.0
+            })
+
+        if not rows:
+            return jsonify({"ok": False, "error": "No usable rows in price data"}), 404
+
+        last = rows[-1]
+        return jsonify({
+            "ok": True,
+            "ticker": ticker,
+            "period": period,
+            "interval": interval,
+            "last_price": last["close"],
+            "last_timestamp": last["timestamp"],
+            "data": rows
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
