@@ -76,7 +76,7 @@ def fetch_hourly_history_chunked(ticker: str,
             interval=interval,
             auto_adjust=False,
             prepost=False,
-            threads=True,
+            threads=False,
             progress=False,
         )
         if df is not None and not df.empty:
@@ -527,7 +527,7 @@ def rsi_live():
         try:
             df = yf.download(
                 tickers=[ticker], interval=interval, period=yf_period,
-                auto_adjust=False, progress=False, threads=True, group_by="ticker"
+                auto_adjust=False, progress=False, threads=False, group_by="ticker"
             )
             # When single ticker, df has plain columns
             if isinstance(df.columns, pd.MultiIndex):
@@ -566,7 +566,7 @@ def rsi_live():
         # One multi-ticker call (fastest path). yfinance accepts a list.
         df_all = yf.download(
             tickers=NSE_TICKERS, interval=interval, period=yf_period,
-            auto_adjust=False, progress=False, threads=True, group_by="ticker"
+            auto_adjust=False, progress=False, threads=False, group_by="ticker"
         )
     except Exception as e:
         return jsonify(ok=False, error=f"download failed: {e}"), 500
@@ -857,7 +857,7 @@ def api_live_price():
             interval=interval,
             auto_adjust=False,
             progress=False,
-            threads=True,
+            threads=False,
             group_by="ticker"
         )
 
