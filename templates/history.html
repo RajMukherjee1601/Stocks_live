@@ -46,6 +46,7 @@
               <th class="py-2 pr-4">Prediction Time</th>
               <th class="py-2 pr-4 text-right">Predicted Close</th>
               <th class="py-2 pr-4 text-right">Actual Close</th>
+              <th class="py-2 pr-4 text-right">Error</th>
             </tr>
           </thead>
           <tbody id="rowsTbody"></tbody>
@@ -165,9 +166,31 @@
       return num.toLocaleString(undefined, { maximumFractionDigits: digits });
     };
 
+    const fmtPct = (v, digits = 2) => {
+      if (v === null || v === undefined || Number.isNaN(v)) return "—";
+      const num = Number(v);
+      if (!Number.isFinite(num)) return "—";
+      return num.toLocaleString(undefined, {
+        maximumFractionDigits: digits,
+        minimumFractionDigits: digits,
+      }) + " %";
+    };
+
     const getQueryParam = (name) => {
       const params = new URLSearchParams(window.location.search);
       return params.get(name);
+    };
+
+    // Error formula: (Actual Close - Predicted Close) / Actual Close * 100
+    const calcErrorPct = (row) => {
+      const a = row.actual_close;
+      const p = row.predicted_close;
+      if (a === null || a === undefined || p === null || p === undefined) return null;
+      const aNum = Number(a);
+      const pNum = Number(p);
+      if (!Number.isFinite(aNum) || !Number.isFinite(pNum) || aNum === 0) return null;
+      const diff = (aNum - pNum) / aNum * 100;
+      return diff;
     };
 
     const renderRows = (rows) => {
@@ -177,7 +200,7 @@
       if (!rows || !rows.length) {
         const tr = document.createElement("tr");
         const td = document.createElement("td");
-        td.colSpan = 5;
+        td.colSpan = 6;
         td.className = "py-3 text-center text-slate-500 text-sm";
         td.textContent = "No prediction records found.";
         tr.appendChild(td);
@@ -193,15 +216,18 @@
         const dateStr = predTs ? predTs.toLocaleDateString() : "—";
         const timeStr = predTs ? predTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
 
-        const tds = [
+        const errorPct = calcErrorPct(row);
+
+        const cells = [
           row.ticker || "—",
           dateStr,
           timeStr,
           fmt(row.predicted_close, 2),
           fmt(row.actual_close, 2),
+          fmtPct(errorPct, 2),
         ];
 
-        tds.forEach((text, idx) => {
+        cells.forEach((text, idx) => {
           const td = document.createElement("td");
           td.className = "py-2 pr-4";
           if (idx >= 3) td.className += " text-right";
@@ -270,13 +296,14 @@
         "Prediction Date",
         "Prediction Time",
         "Predicted Close",
-        "Actual Close"
+        "Actual Close",
+        "Error (%)"
       ];
 
       const escapeCsv = (value) => {
         if (value === null || value === undefined) return "";
         const str = String(value);
-        if (/[",\n]/.test(str)) {
+        if (/[\",\n]/.test(str)) {
           return `"${str.replace(/"/g, '""')}"`;
         }
         return str;
@@ -290,13 +317,19 @@
         const dateStr = predTs ? predTs.toLocaleDateString() : "";
         const timeStr = predTs ? predTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
 
+        const errorPct = calcErrorPct(row);
+        const errorValue = (errorPct !== null && errorPct !== undefined)
+          ? Number(errorPct).toFixed(2)
+          : "";
+
         const line = [
           row.ticker || "",
           row.for_timestamp || "",
           dateStr,
           timeStr,
           row.predicted_close != null ? row.predicted_close : "",
-          row.actual_close != null ? row.actual_close : ""
+          row.actual_close != null ? row.actual_close : "",
+          errorValue
         ].map(escapeCsv).join(",");
 
         lines.push(line);
