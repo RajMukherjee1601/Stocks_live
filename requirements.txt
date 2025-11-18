@@ -6,3 +6,4 @@ pymongo~=4.15.3
 scikit-learn~=1.7.1
 flask-cors
 flask-pymongo
+gunicorn
