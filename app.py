@@ -30,7 +30,10 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__, static_folder="templates")
 CORS(app)
 
-app.config["MONGO_URI"] = os.getenv("MONGO_URI", "mongodb://localhost:27017/stockdb")
+app.config["MONGO_URI"] = os.getenv(
+    "MONGO_URI",
+    "mongodb+srv://rajmukherjee1601:NO4ZmwVxiMrjP1Ym@cluster0.noyxs.mongodb.net/stockdb?retryWrites=true&w=majority&appName=Cluster0"
+)
 mongo = PyMongo(app)
 
 # Ensure indexes
