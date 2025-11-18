@@ -210,9 +210,16 @@ def train_and_evaluate_models(dfX: pd.DataFrame, feature_cols: list):
             ("model", Ridge(alpha=1.0, random_state=42))
         ]),
         "3_RandomForest": RandomForestRegressor(
-            n_estimators=350, random_state=42, n_jobs=-1
-        ),
-        "4_GradientBoosting": GradientBoostingRegressor(random_state=42),
+    n_estimators=80,      # was 350
+    max_depth=8,         # cap depth
+    random_state=42,
+    n_jobs=1             # avoid lots of threads
+),
+"4_GradientBoosting": GradientBoostingRegressor(
+    random_state=42,
+    max_depth=3
+),
+
         # "5_MLP_Backprop": Pipeline([
         #     ("scaler", StandardScaler()),
         #     ("model", MLPRegressor(
