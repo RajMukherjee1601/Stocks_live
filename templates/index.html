@@ -1,3 +1,4 @@
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -99,7 +100,7 @@
           </table>
         </div>
         <p class="text-xs text-slate-500 mt-3">
-          Models: 1) Linear Regression, 2) Ridge, 3) Random Forest, 4) Gradient Boosting, 5) <span class="font-medium">MLP (Backpropagation)</span>
+          Models: 1) Linear Regression, 2) Ridge, 3) Random Forest, 4) Gradient Boosting
         </p>
       </div>
     </section>
@@ -145,9 +146,6 @@
 </section>
 
 
-    <footer class="mt-10 text-xs text-slate-500">
-      <p>5th model uses a backpropagation MLP (hidden layers 64→32, ReLU, Adam). Data is hourly OHLCV from yfinance (1y, chunked) stored in MongoDB.</p>
-    </footer>
   </div>
 
   <script>
@@ -429,24 +427,35 @@ const loadNews = async () => {
       }
     };
 
-    const predict = async () => {
-      const ticker = getTicker();
-      setBusy(true, `Training 5 models & forecasting next 3 hours for ${ticker}…`);
-      try {
-        const r = await fetch(`${API_BASE}/api/predict?ticker=${encodeURIComponent(ticker)}`);
-        const j = await r.json();
-        if (!r.ok || !j.ok) throw new Error(j.error || "Prediction failed.");
+    const safeJson = async (r) => {
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // Show first part of the HTML so you know what the server sent
+    throw new Error(`Server returned non-JSON (status ${r.status}): ${text.slice(0, 120)}…`);
+  }
+};
 
-        renderMetrics(j.metrics, j.best_model, new Date().toISOString());
-        renderPredictions(j.predictions_next_3_hours);
-        status(`Best model for ${j.ticker}: ${j.best_model}. Forecast ready.`, "success");
-      } catch (e) {
-        console.error(e);
-        status(`Predict error: ${e.message}`, "error");
-      } finally {
-        setBusy(false);
-      }
-    };
+const predict = async () => {
+  const ticker = getTicker();
+  setBusy(true, `Training 5 models & forecasting next 3 hours for ${ticker}…`);
+  try {
+    const r = await fetch(`${API_BASE}/api/predict?ticker=${encodeURIComponent(ticker)}`);
+    const j = await safeJson(r);
+    if (!r.ok || !j.ok) throw new Error(j.error || "Prediction failed.");
+
+    renderMetrics(j.metrics, j.best_model, new Date().toISOString());
+    renderPredictions(j.predictions_next_3_hours);
+    status(`Best model for ${j.ticker}: ${j.best_model}. Forecast ready.`, "success");
+  } catch (e) {
+    console.error(e);
+    status(`Predict error: ${e.message}`, "error");
+  } finally {
+    setBusy(false);
+  }
+};
+
 
     const loadLatest = async () => {
       const ticker = getTicker();
