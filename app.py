@@ -13,7 +13,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.neural_network import MLPRegressor
+#from sklearn.neural_network import MLPRegressor
 from flask import request, jsonify
 from time import perf_counter
 from datetime import timezone
@@ -213,16 +213,16 @@ def train_and_evaluate_models(dfX: pd.DataFrame, feature_cols: list):
             n_estimators=350, random_state=42, n_jobs=-1
         ),
         "4_GradientBoosting": GradientBoostingRegressor(random_state=42),
-        "5_MLP_Backprop": Pipeline([
-            ("scaler", StandardScaler()),
-            ("model", MLPRegressor(
-                hidden_layer_sizes=(64, 32),
-                activation="relu",
-                solver="adam",
-                max_iter=500,
-                random_state=42
-            ))
-        ]),
+        # "5_MLP_Backprop": Pipeline([
+        #     ("scaler", StandardScaler()),
+        #     ("model", MLPRegressor(
+        #         hidden_layer_sizes=(64, 32),
+        #         activation="relu",
+        #         solver="adam",
+        #         max_iter=500,
+        #         random_state=42
+        #     ))
+        # ]),
     }
 
     results = {}
