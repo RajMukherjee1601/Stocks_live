@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Prediction vs Actual — History</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl font-extrabold tracking-tight">
+        Prediction vs Actual Price — History
+      </h1>
+      <p class="text-slate-600 mt-1">
+        Table for <span id="tickerLabel" class="font-semibold"></span>
+        showing prediction time, predicted close, and actual close from Yahoo Finance.
+      </p>
+
+      <!-- Controls: ticker dropdown + download button -->
+      <div class="mt-3 flex flex-wrap items-center gap-3">
+        <label for="tickerSelectHistory" class="text-sm font-medium text-slate-700">
+          Change company:
+        </label>
+        <select id="tickerSelectHistory"
+                class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <!-- options will be filled by JavaScript -->
+        </select>
+
+        <button id="btnDownload"
+                class="rounded-lg bg-emerald-600 text-white px-3 py-1.5 text-sm shadow hover:bg-emerald-500 active:scale-[.99] disabled:opacity-50 disabled:cursor-not-allowed">
+          Download Excel
+        </button>
+      </div>
+    </header>
+
+    <section id="statusBox" class="mb-4" aria-live="polite"></section>
+
+    <section class="mb-6">
+      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead>
+            <tr class="text-left text-slate-600 border-b">
+              <th class="py-2 pr-4">Company</th>
+              <th class="py-2 pr-4">Prediction Date</th>
+              <th class="py-2 pr-4">Prediction Time</th>
+              <th class="py-2 pr-4 text-right">Predicted Close</th>
+              <th class="py-2 pr-4 text-right">Actual Close</th>
+            </tr>
+          </thead>
+          <tbody id="rowsTbody"></tbody>
+        </table>
+      </div>
+      <p class="text-xs text-slate-500 mt-2">
+        Note: Actual close is fetched from Yahoo Finance using the nearest hourly bar to the predicted timestamp.
+      </p>
+    </section>
+  </div>
+
+  <script>
+    const API_BASE = /^http(s)?:\/\//.test(location.origin) ? "" : "http://localhost:5000";
+    const $ = (sel) => document.querySelector(sel);
+
+    // Holds the last loaded rows so we can export them
+    let currentRows = [];
+
+    // =============== NSE Ticker Map (Label -> Symbol) ===============
+    const STOCKS = {
+      "Reliance Industries (RELIANCE.NS)": "RELIANCE.NS",
+      "TCS (TCS.NS)": "TCS.NS",
+      "HDFC Bank (HDFCBANK.NS)": "HDFCBANK.NS",
+      "ICICI Bank (ICICIBANK.NS)": "ICICIBANK.NS",
+      "Infosys (INFY.NS)": "INFY.NS",
+      "ITC (ITC.NS)": "ITC.NS",
+      "State Bank of India (SBIN.NS)": "SBIN.NS",
+      "Bharti Airtel (BHARTIARTL.NS)": "BHARTIARTL.NS",
+      "Hindustan Unilever (HINDUNILVR.NS)": "HINDUNILVR.NS",
+      "Larsen & Toubro (LT.NS)": "LT.NS",
+      "Axis Bank (AXISBANK.NS)": "AXISBANK.NS",
+      "Kotak Mahindra Bank (KOTAKBANK.NS)": "KOTAKBANK.NS",
+      "Bajaj Finance (BAJFINANCE.NS)": "BAJFINANCE.NS",
+      "Bajaj Finserv (BAJAJFINSV.NS)": "BAJAJFINSV.NS",
+      "Adani Enterprises (ADANIENT.NS)": "ADANIENT.NS",
+      "Adani Ports (ADANIPORTS.NS)": "ADANIPORTS.NS",
+      "Maruti Suzuki (MARUTI.NS)": "MARUTI.NS",
+      "Sun Pharma (SUNPHARMA.NS)": "SUNPHARMA.NS",
+      "Asian Paints (ASIANPAINT.NS)": "ASIANPAINT.NS",
+      "Mahindra & Mahindra (M&M.NS)": "M&M.NS",
+      "Tata Motors (TATAMOTORS.NS)": "TATAMOTORS.NS",
+      "NTPC (NTPC.NS)": "NTPC.NS",
+      "Power Grid (POWERGRID.NS)": "POWERGRID.NS",
+      "UltraTech Cement (ULTRACEMCO.NS)": "ULTRACEMCO.NS",
+      "JSW Steel (JSWSTEEL.NS)": "JSWSTEEL.NS",
+      "Tata Steel (TATASTEEL.NS)": "TATASTEEL.NS",
+      "Nestlé India (NESTLEIND.NS)": "NESTLEIND.NS",
+      "Titan (TITAN.NS)": "TITAN.NS",
+      "Tech Mahindra (TECHM.NS)": "TECHM.NS",
+      "Wipro (WIPRO.NS)": "WIPRO.NS",
+      "Grasim (GRASIM.NS)": "GRASIM.NS",
+      "Cipla (CIPLA.NS)": "CIPLA.NS",
+      "Divi's Laboratories (DIVISLAB.NS)": "DIVISLAB.NS",
+      "Dr. Reddy's (DRREDDY.NS)": "DRREDDY.NS",
+      "Britannia (BRITANNIA.NS)": "BRITANNIA.NS",
+      "Eicher Motors (EICHERMOT.NS)": "EICHERMOT.NS",
+      "Hero MotoCorp (HEROMOTOCO.NS)": "HEROMOTOCO.NS",
+      "Bajaj Auto (BAJAJ-AUTO.NS)": "BAJAJ-AUTO.NS",
+      "Tata Consumer (TATACONSUM.NS)": "TATACONSUM.NS",
+      "HDFC Life (HDFCLIFE.NS)": "HDFCLIFE.NS",
+      "SBI Life (SBILIFE.NS)": "SBILIFE.NS",
+      "ICICI Lombard (ICICIGI.NS)": "ICICIGI.NS",
+      "Hindalco (HINDALCO.NS)": "HINDALCO.NS",
+      "Coal India (COALINDIA.NS)": "COALINDIA.NS",
+      "ONGC (ONGC.NS)": "ONGC.NS",
+      "LTIMindtree (LTIM.NS)": "LTIM.NS",
+      "Apollo Hospitals (APOLLOHOSP.NS)": "APOLLOHOSP.NS",
+      "Avenue Supermarts (DMART.NS)": "DMART.NS",
+      "DLF (DLF.NS)": "DLF.NS",
+      "Godrej Consumer (GODREJCP.NS)": "GODREJCP.NS",
+      "BSE Limited (BSE.NS)": "BSE.NS",
+      "UPL (UPL.NS)": "UPL.NS",
+      "Dixon Technologies (DIXON.NS)": "DIXON.NS",
+      "Suzlon Energy (SUZLON.NS)": "SUZLON.NS",
+      "Coforge (COFORGE.NS)": "COFORGE.NS",
+      "Brigade Enterprises (BRIGADE.NS)": "BRIGADE.NS"
+    };
+
+    const buildTickerDropdown = (initialTicker) => {
+      const sel = $("#tickerSelectHistory");
+      if (!sel) return;
+
+      sel.innerHTML = "";
+      Object.entries(STOCKS).forEach(([label, symbol]) => {
+        const opt = document.createElement("option");
+        opt.value = symbol;
+        opt.textContent = label;
+        sel.appendChild(opt);
+      });
+
+      const allSymbols = Object.values(STOCKS);
+      const validInitial = initialTicker && allSymbols.includes(initialTicker);
+
+      sel.value = validInitial ? initialTicker : "RELIANCE.NS";
+    };
+
+    const status = (msg, type = "info") => {
+      const box = $("#statusBox");
+      box.innerHTML = "";
+      const base = "rounded-xl px-4 py-3 shadow border text-sm";
+      const palette = {
+        info:    "bg-sky-50 border-sky-200 text-sky-900",
+        success: "bg-emerald-50 border-emerald-200 text-emerald-900",
+        warn:    "bg-amber-50 border-amber-200 text-amber-900",
+        error:   "bg-rose-50 border-rose-200 text-rose-900",
+      };
+      const card = document.createElement("div");
+      card.className = base + " " + (palette[type] || palette.info);
+      card.textContent = msg;
+      box.appendChild(card);
+    };
+
+    const fmt = (v, digits = 2) => {
+      if (v === null || v === undefined || Number.isNaN(v)) return "—";
+      const num = Number(v);
+      if (!Number.isFinite(num)) return "—";
+      return num.toLocaleString(undefined, { maximumFractionDigits: digits });
+    };
+
+    const getQueryParam = (name) => {
+      const params = new URLSearchParams(window.location.search);
+      return params.get(name);
+    };
+
+    const renderRows = (rows) => {
+      const tbody = $("#rowsTbody");
+      tbody.innerHTML = "";
+
+      if (!rows || !rows.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 5;
+        td.className = "py-3 text-center text-slate-500 text-sm";
+        td.textContent = "No prediction records found.";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+
+      rows.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.className = "border-b last:border-0";
+
+        const predTs = row.for_timestamp ? new Date(row.for_timestamp) : null;
+        const dateStr = predTs ? predTs.toLocaleDateString() : "—";
+        const timeStr = predTs ? predTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+
+        const tds = [
+          row.ticker || "—",
+          dateStr,
+          timeStr,
+          fmt(row.predicted_close, 2),
+          fmt(row.actual_close, 2),
+        ];
+
+        tds.forEach((text, idx) => {
+          const td = document.createElement("td");
+          td.className = "py-2 pr-4";
+          if (idx >= 3) td.className += " text-right";
+          td.textContent = text;
+          tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+      });
+    };
+
+    const setDownloadEnabled = (enabled) => {
+      const btn = $("#btnDownload");
+      if (btn) {
+        btn.disabled = !enabled;
+      }
+    };
+
+    const loadTable = async (tickerArg) => {
+      // priority: explicit arg → dropdown → URL → default
+      let ticker =
+        (tickerArg ||
+         $("#tickerSelectHistory")?.value ||
+         getQueryParam("ticker") ||
+         "RELIANCE.NS").toUpperCase();
+
+      $("#tickerLabel").textContent = ticker;
+      status(`Loading prediction history for ${ticker}…`, "info");
+      setDownloadEnabled(false);
+      currentRows = [];
+
+      try {
+        const r = await fetch(
+          `${API_BASE}/api/predictions/table?ticker=${encodeURIComponent(ticker)}&limit=50`
+        );
+        const j = await r.json();
+        if (!r.ok || !j.ok) {
+          throw new Error(j.error || "Failed to load history.");
+        }
+
+        currentRows = Array.isArray(j.rows) ? j.rows : [];
+        renderRows(currentRows);
+        status(`Loaded ${currentRows.length} prediction rows for ${ticker}.`, "success");
+        setDownloadEnabled(currentRows.length > 0);
+      } catch (e) {
+        console.error(e);
+        status(`Error loading table: ${e.message}`, "error");
+        setDownloadEnabled(false);
+      }
+    };
+
+    // Convert currentRows to CSV and trigger a download
+    const downloadCsv = () => {
+      if (!currentRows || !currentRows.length) {
+        status("No rows to download.", "warn");
+        return;
+      }
+
+      const ticker = ($("#tickerSelectHistory")?.value || "DATA").toUpperCase();
+      const safeTicker = ticker.replace(/[^A-Z0-9_.-]/gi, "_");
+      const filename = `predictions_${safeTicker}.csv`;
+
+      const headers = [
+        "Ticker",
+        "Prediction Timestamp (ISO)",
+        "Prediction Date",
+        "Prediction Time",
+        "Predicted Close",
+        "Actual Close"
+      ];
+
+      const escapeCsv = (value) => {
+        if (value === null || value === undefined) return "";
+        const str = String(value);
+        if (/[",\n]/.test(str)) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+
+      const lines = [];
+      lines.push(headers.map(escapeCsv).join(","));
+
+      currentRows.forEach(row => {
+        const predTs = row.for_timestamp ? new Date(row.for_timestamp) : null;
+        const dateStr = predTs ? predTs.toLocaleDateString() : "";
+        const timeStr = predTs ? predTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+
+        const line = [
+          row.ticker || "",
+          row.for_timestamp || "",
+          dateStr,
+          timeStr,
+          row.predicted_close != null ? row.predicted_close : "",
+          row.actual_close != null ? row.actual_close : ""
+        ].map(escapeCsv).join(",");
+
+        lines.push(line);
+      });
+
+      const csvContent = lines.join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.setAttribute("download", filename);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const urlTicker = (getQueryParam("ticker") || "RELIANCE.NS").toUpperCase();
+
+      // 1) Build dropdown and select URL ticker (if provided)
+      buildTickerDropdown(urlTicker);
+
+      // 2) Initial load
+      loadTable(urlTicker);
+
+      // 3) When user changes dropdown, reload table & update URL (without reload)
+      const sel = $("#tickerSelectHistory");
+      if (sel) {
+        sel.addEventListener("change", () => {
+          const newTicker = sel.value;
+          const url = new URL(window.location.href);
+          url.searchParams.set("ticker", newTicker);
+          window.history.replaceState({}, "", url);
+          loadTable(newTicker);
+        });
+      }
+
+      // 4) Download button
+      const btnDl = $("#btnDownload");
+      if (btnDl) {
+        btnDl.addEventListener("click", downloadCsv);
+      }
+    });
+  </script>
+</body>
+</html>

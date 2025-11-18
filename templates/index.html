@@ -51,6 +51,12 @@
           Open Live Price Viewer
         </a>
 
+                <button id="btnTable"
+                class="rounded-xl bg-fuchsia-600 text-white px-4 py-2 shadow hover:bg-fuchsia-500 active:scale-[.99] disabled:opacity-50">
+          Open Prediction Table
+        </button>
+
+
 
         <div id="spinner" class="hidden flex items-center gap-2 text-sm text-slate-600">
           <svg class="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -294,12 +300,15 @@ const loadNews = async () => {
     const hide = (sel) => $(sel).classList.add("hidden");
 
     const setBusy = (busy, text = "Working…") => {
-      $("#spinnerText").textContent = text;
-      $("#spinner").classList.toggle("hidden", !busy);
-      ["#btnIngest", "#btnPredict", "#btnLatest", "#tickerSelect"].forEach(s => {
-        $(s).disabled = busy;
-      });
-    };
+  $("#spinnerText").textContent = text;
+  $("#spinner").classList.toggle("hidden", !busy);
+  ["#btnIngest", "#btnPredict", "#btnLatest", "#btnTable", "#btnNews", "#tickerSelect"].forEach(s => {
+    const node = $(s);
+    if (node) node.disabled = busy;
+  });
+};
+
+
 
     const status = (msg, type = "info") => {
       const box = $("#statusBox");
@@ -495,9 +504,17 @@ const predict = async () => {
     } catch {}
   });
 
-  // >>> add this:
+  // >>> add this for the new table button <<<
+  $("#btnTable").addEventListener("click", () => {
+    const tkr = getTicker();
+    // Open new tab with the selected ticker
+    window.open(`/history?ticker=${encodeURIComponent(tkr)}`, "_blank");
+  });
+
+  // >>> existing call
   loadNews();
 });
+
 
 
   </script>

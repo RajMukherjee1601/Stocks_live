@@ -909,6 +909,148 @@ def api_live_price():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
+
+from datetime import datetime, timedelta, timezone  # already present at top
+from flask import request, jsonify                  # already present at top
+from pymongo import ASCENDING                       # already present
+
+# ... keep all existing code ...
+
+@app.route("/api/predictions/table", methods=["GET"])
+def api_predictions_table():
+    """
+    Returns a flat table of predictions + actual close for a given ticker.
+
+    Query params:
+      ticker = e.g. RELIANCE.NS (required)
+      limit  = number of prediction documents to look back (default 20)
+    """
+    ticker = (request.args.get("ticker") or "").upper().strip()
+    if not ticker:
+        return jsonify({"ok": False, "error": "Missing ticker parameter"}), 400
+
+    try:
+        limit = int(request.args.get("limit", 20))
+    except Exception:
+        limit = 20
+
+    # 1) Read latest prediction documents from Mongo
+    docs = mongo.db.predictions.find(
+        {"ticker": ticker}
+    ).sort("generated_at", -1).limit(limit)
+
+    raw_rows = []      # temp rows with dt object
+    pred_times = []    # list of datetime (UTC) for all prediction timestamps
+
+    for doc in docs:
+        gen_at = doc.get("generated_at")
+        if isinstance(gen_at, datetime):
+            gen_at_iso = gen_at.isoformat()
+        else:
+            gen_at_iso = str(gen_at) if gen_at is not None else None
+
+        for p in doc.get("predictions", []):
+            ts_str = p.get("for_timestamp")
+            if not ts_str:
+                continue
+
+            # Parse prediction timestamp (assume UTC / convert to UTC)
+            dt_pred_utc = None
+            try:
+                dt_tmp = datetime.fromisoformat(ts_str)
+                if dt_tmp.tzinfo is None:
+                    dt_tmp = dt_tmp.replace(tzinfo=timezone.utc)
+                dt_pred_utc = dt_tmp.astimezone(timezone.utc)
+            except Exception:
+                dt_pred_utc = None
+
+            predicted_close = p.get("predicted_close")
+            if predicted_close is not None:
+                predicted_close = float(predicted_close)
+
+            raw_rows.append({
+                "ticker": ticker,
+                "generated_at": gen_at_iso,
+                "for_timestamp": ts_str,
+                "predicted_close": predicted_close,
+                "dt_pred_utc": dt_pred_utc,  # keep for later lookup
+            })
+
+            if dt_pred_utc is not None:
+                pred_times.append(dt_pred_utc)
+
+    # If no predictions, return early
+    if not raw_rows:
+        return jsonify({"ok": True, "ticker": ticker, "rows": []})
+
+    # 2) Fetch actual prices from yfinance for the whole prediction window
+    price_df = None
+    if pred_times:
+        start = min(pred_times) - timedelta(hours=2)
+        end = max(pred_times) + timedelta(hours=2)
+        try:
+            df = yf.download(
+                tickers=[ticker],
+                start=start,
+                end=end,
+                interval="1h",
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+                group_by="ticker",
+            )
+
+            # When single ticker, df can be plain or MultiIndex
+            if isinstance(df.columns, pd.MultiIndex):
+                df = df[ticker]
+
+            df = df[["Close"]].dropna()
+            if not df.empty:
+                idx = df.index
+                if idx.tz is None:
+                    df.index = idx.tz_localize(timezone.utc)
+                else:
+                    df.index = idx.tz_convert(timezone.utc)
+                price_df = df
+        except Exception:
+            price_df = None
+
+    # 3) For each prediction, find nearest yfinance bar (≤ 45 minutes difference)
+    final_rows = []
+    for r in raw_rows:
+        dt_pred_utc = r.pop("dt_pred_utc", None)
+        actual_close = None
+
+        if price_df is not None and dt_pred_utc is not None and not price_df.empty:
+            nearest_ts = None
+            min_diff = None
+
+            for ts in price_df.index:
+                diff_sec = abs((ts - dt_pred_utc).total_seconds())
+                if (min_diff is None) or (diff_sec < min_diff):
+                    min_diff = diff_sec
+                    nearest_ts = ts
+
+            # Only accept it if within 45 minutes
+            if nearest_ts is not None and min_diff <= 45 * 60:
+                actual_close = float(price_df.loc[nearest_ts, "Close"])
+
+        r["actual_close"] = actual_close
+        final_rows.append(r)
+
+    return jsonify({
+        "ok": True,
+        "ticker": ticker,
+        "rows": final_rows,
+    })
+
+
+@app.route("/history")
+def serve_history_page():
+    return app.send_static_file("history.html")
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port , debug=False)
