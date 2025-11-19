@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Volume Analytics — Stocks ML</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-6xl mx-auto p-6">
+    <!-- Header -->
+    <header class="mb-6">
+      <h1 class="text-2xl font-extrabold tracking-tight">
+        Volume Analytics — Price &amp; Volume Breakdown
+      </h1>
+      <p class="text-slate-600 mt-1">
+        View <span class="font-semibold">Open / Close price</span> with
+        <span class="font-semibold">Total Volume, Credit Volume, Delivery Volume</span>
+        per bar.
+      </p>
+    </header>
+
+    <!-- Controls -->
+    <section class="mb-4">
+      <div class="flex flex-col md:flex-row gap-3 items-start md:items-end">
+        <!-- Ticker -->
+        <label class="w-full md:w-72">
+          <span class="block text-sm font-medium text-slate-700">Ticker (NSE)</span>
+          <select id="tickerSelectVolume"
+                  class="mt-1 block w-full rounded-xl border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-3 py-2">
+          </select>
+        </label>
+
+        <!-- Period -->
+        <label class="w-full md:w-40">
+          <span class="block text-sm font-medium text-slate-700">Period</span>
+          <select id="periodSelect"
+                  class="mt-1 block w-full rounded-xl border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-3 py-2">
+            <option value="5d">5 days</option>
+            <option value="1mo">1 month</option>
+            <option value="3mo">3 months</option>
+            <option value="6mo">6 months</option>
+          </select>
+        </label>
+
+        <!-- Interval -->
+        <label class="w-full md:w-40">
+          <span class="block text-sm font-medium text-slate-700">Interval</span>
+          <select id="intervalSelect"
+                  class="mt-1 block w-full rounded-xl border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-3 py-2">
+            <option value="1h">1 hour</option>
+            <option value="30m">30 minutes</option>
+            <option value="1d">1 day</option>
+          </select>
+        </label>
+
+        <!-- Refresh -->
+        <button id="refreshBtn"
+                class="rounded-xl bg-indigo-600 text-white px-4 py-2 shadow hover:bg-indigo-500 active:scale-[.99] mt-1 md:mt-0">
+          Refresh
+        </button>
+      </div>
+
+      <p class="text-xs text-slate-500 mt-2">
+        Uses Yahoo Finance OHLCV as source. Credit &amp; Delivery Volume are placeholders
+        for now (wired in backend, ready to plug actual NSE data later).
+      </p>
+    </section>
+
+    <!-- Status / Error -->
+    <section class="mb-3">
+      <p id="statusText" class="text-xs text-slate-500"></p>
+      <p id="errorText" class="text-xs text-red-600"></p>
+    </section>
+
+    <!-- Table -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-100 border-b border-slate-200">
+            <tr>
+              <th class="text-left px-4 py-2 font-semibold text-slate-700">Date</th>
+              <th class="text-left px-4 py-2 font-semibold text-slate-700">Time</th>
+              <th class="text-right px-4 py-2 font-semibold text-slate-700">Open</th>
+              <th class="text-right px-4 py-2 font-semibold text-slate-700">Close</th>
+              <th class="text-right px-4 py-2 font-semibold text-slate-700">Total Volume</th>
+              <th class="text-right px-4 py-2 font-semibold text-slate-700">Credit Volume</th>
+              <th class="text-right px-4 py-2 font-semibold text-slate-700">Delivery Volume</th>
+            </tr>
+          </thead>
+          <tbody id="rowsTbody" class="divide-y divide-slate-100">
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // ========= Helpers =========
+    const API_BASE = /^http(s)?:\/\//.test(location.origin) ? "" : "http://localhost:5000";
+    const $ = (sel) => document.querySelector(sel);
+
+    const getQueryParam = (name) => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get(name);
+    };
+
+    const fmt = (val, decimals = 2) => {
+      if (val === null || val === undefined) return "—";
+      const num = Number(val);
+      if (Number.isNaN(num)) return "—";
+      return num.toFixed(decimals);
+    };
+
+    // =============== NSE Ticker Map (Label -> Symbol) ===============
+    const STOCKS = {
+      "Reliance Industries (RELIANCE.NS)": "RELIANCE.NS",
+      "TCS (TCS.NS)": "TCS.NS",
+      "HDFC Bank (HDFCBANK.NS)": "HDFCBANK.NS",
+      "ICICI Bank (ICICIBANK.NS)": "ICICIBANK.NS",
+      "Infosys (INFY.NS)": "INFY.NS",
+      "ITC (ITC.NS)": "ITC.NS",
+      "State Bank of India (SBIN.NS)": "SBIN.NS",
+      "Bharti Airtel (BHARTIARTL.NS)": "BHARTIARTL.NS",
+      "Hindustan Unilever (HINDUNILVR.NS)": "HINDUNILVR.NS",
+      "Larsen & Toubro (LT.NS)": "LT.NS",
+      "Axis Bank (AXISBANK.NS)": "AXISBANK.NS",
+      "Kotak Mahindra Bank (KOTAKBANK.NS)": "KOTAKBANK.NS",
+      "Bajaj Finance (BAJFINANCE.NS)": "BAJFINANCE.NS",
+      "Bajaj Finserv (BAJAJFINSV.NS)": "BAJAJFINSV.NS",
+      "Adani Enterprises (ADANIENT.NS)": "ADANIENT.NS",
+      "Adani Ports (ADANIPORTS.NS)": "ADANIPORTS.NS",
+      "Maruti Suzuki (MARUTI.NS)": "MARUTI.NS",
+      "Sun Pharma (SUNPHARMA.NS)": "SUNPHARMA.NS",
+      "Asian Paints (ASIANPAINT.NS)": "ASIANPAINT.NS",
+      "Mahindra & Mahindra (M&M.NS)": "M&M.NS",
+      "Tata Motors (TATAMOTORS.NS)": "TATAMOTORS.NS",
+      "NTPC (NTPC.NS)": "NTPC.NS",
+      "Power Grid (POWERGRID.NS)": "POWERGRID.NS",
+      "UltraTech Cement (ULTRACEMCO.NS)": "ULTRACEMCO.NS",
+      "JSW Steel (JSWSTEEL.NS)": "JSWSTEEL.NS",
+      "Tata Steel (TATASTEEL.NS)": "TATASTEEL.NS",
+      "Nestlé India (NESTLEIND.NS)": "NESTLEIND.NS",
+      "Titan (TITAN.NS)": "TITAN.NS",
+      "Tech Mahindra (TECHM.NS)": "TECHM.NS",
+      "Wipro (WIPRO.NS)": "WIPRO.NS",
+      "Grasim (GRASIM.NS)": "GRASIM.NS",
+      "Cipla (CIPLA.NS)": "CIPLA.NS",
+      "Divi's Laboratories (DIVISLAB.NS)": "DIVISLAB.NS",
+      "Dr. Reddy's (DRREDDY.NS)": "DRREDDY.NS",
+      "Britannia (BRITANNIA.NS)": "BRITANNIA.NS",
+      "Eicher Motors (EICHERMOT.NS)": "EICHERMOT.NS",
+      "Hero MotoCorp (HEROMOTOCO.NS)": "HEROMOTOCO.NS",
+      "Bajaj Auto (BAJAJ-AUTO.NS)": "BAJAJ-AUTO.NS"
+    };
+
+    const buildTickerDropdown = (initialTicker) => {
+      const sel = $("#tickerSelectVolume");
+      if (!sel) return;
+      sel.innerHTML = "";
+
+      const entries = Object.entries(STOCKS).sort((a, b) =>
+        a[0].localeCompare(b[0])
+      );
+
+      entries.forEach(([label, symbol]) => {
+        const opt = document.createElement("option");
+        opt.value = symbol;
+        opt.textContent = label;
+        if (symbol === initialTicker) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    };
+
+    const renderRows = (rows) => {
+      const tbody = $("#rowsTbody");
+      tbody.innerHTML = "";
+
+      if (!rows || !rows.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 7;
+        td.className = "py-3 text-center text-slate-500 text-sm";
+        td.textContent = "No data available.";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+
+      rows.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.className = "border-b last:border-0";
+
+        const ts = row.timestamp ? new Date(row.timestamp) : null;
+        const dateStr = ts ? ts.toLocaleDateString() : "—";
+        const timeStr = ts ? ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+
+        const cells = [
+  dateStr,
+  timeStr,
+  fmt(row.open, 2),
+  fmt(row.close, 2),
+  fmt(row.total_volume, 0),
+  fmt(row.credit_volume, 0),
+  fmt(row.delivery_volume, 0)
+];
+
+
+        cells.forEach((text, idx) => {
+          const td = document.createElement("td");
+          td.className = "py-2 px-4";
+          if (idx >= 2) td.className += " text-right";
+          td.textContent = text;
+          tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+      });
+    };
+
+    const loadVolumeTable = async (ticker) => {
+      const period = $("#periodSelect").value;
+      const interval = $("#intervalSelect").value;
+      const statusEl = $("#statusText");
+      const errorEl = $("#errorText");
+
+      statusEl.textContent = `Loading ${ticker} (${period}, ${interval})...`;
+      errorEl.textContent = "";
+      renderRows([]); // clear
+
+      try {
+        const params = new URLSearchParams({
+          ticker,
+          period,
+          interval
+        });
+        const res = await fetch(`${API_BASE}/api/volume/table?` + params.toString());
+        const data = await res.json();
+
+        if (!data.ok) {
+          errorEl.textContent = data.error || "Failed to load volume data.";
+          statusEl.textContent = "";
+          renderRows([]);
+          return;
+        }
+
+        renderRows(data.rows || []);
+        statusEl.textContent = `${data.ticker} • ${data.rows.length} rows • period ${data.period} • interval ${data.interval}`;
+      } catch (e) {
+        console.error(e);
+        errorEl.textContent = "Error loading volume data.";
+        statusEl.textContent = "";
+        renderRows([]);
+      }
+    };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const urlTicker = (getQueryParam("ticker") || "RELIANCE.NS").toUpperCase();
+
+      buildTickerDropdown(urlTicker);
+
+      // Initial selectors
+      $("#periodSelect").value = "5d";
+      $("#intervalSelect").value = "1h";
+
+      // Events
+      const sel = $("#tickerSelectVolume");
+      if (sel) {
+        sel.addEventListener("change", () => {
+          const tkr = sel.value;
+          const url = new URL(window.location.href);
+          url.searchParams.set("ticker", tkr);
+          window.history.replaceState({}, "", url);
+          loadVolumeTable(tkr);
+        });
+      }
+
+      $("#periodSelect").addEventListener("change", () => {
+        const tkr = $("#tickerSelectVolume").value;
+        loadVolumeTable(tkr);
+      });
+
+      $("#intervalSelect").addEventListener("change", () => {
+        const tkr = $("#tickerSelectVolume").value;
+        loadVolumeTable(tkr);
+      });
+
+      $("#refreshBtn").addEventListener("click", () => {
+        const tkr = $("#tickerSelectVolume").value;
+        loadVolumeTable(tkr);
+      });
+
+      // Initial load
+      loadVolumeTable(urlTicker);
+    });
+  </script>
+</body>
+</html>

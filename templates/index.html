@@ -56,6 +56,11 @@
           Open Prediction Table
         </button>
 
+        <button id="btnVolumeTable"
+        class="rounded-xl bg-fuchsia-600 text-white px-4 py-2 shadow hover:bg-fuchsia-500 active:scale-[.99] disabled:opacity-50">
+  Open Volume Table
+</button>
+
 
 
         <div id="spinner" class="hidden flex items-center gap-2 text-sm text-slate-600">
@@ -301,11 +306,12 @@ const loadNews = async () => {
     const setBusy = (busy, text = "Working…") => {
   $("#spinnerText").textContent = text;
   $("#spinner").classList.toggle("hidden", !busy);
-  ["#btnIngest", "#btnPredict", "#btnLatest", "#btnTable", "#btnNews", "#tickerSelect"].forEach(s => {
+  ["#btnIngest", "#btnPredict", "#btnLatest", "#btnPredTable", "#btnVolumeTable", "#btnNews", "#tickerSelect"].forEach(s => {
     const node = $(s);
     if (node) node.disabled = busy;
   });
 };
+
 
 
 
@@ -503,16 +509,29 @@ const predict = async () => {
     } catch {}
   });
 
-  // >>> add this for the new table button <<<
-  $("#btnTable").addEventListener("click", () => {
-    const tkr = getTicker();
-    // Open new tab with the selected ticker
-    window.open(`/history?ticker=${encodeURIComponent(tkr)}`, "_blank");
-  });
+  // Prediction table button (if you’ve wired /history to that page)
+  const predBtn = document.getElementById("btnPredTable");
+  if (predBtn) {
+    predBtn.addEventListener("click", () => {
+      const tkr = getTicker();
+      window.open(`/history?ticker=${encodeURIComponent(tkr)}`, "_blank");
+    });
+  }
 
-  // >>> existing call
+  // Volume table button → open volume.html
+  const volBtn = document.getElementById("btnVolumeTable");
+  if (volBtn) {
+    volBtn.addEventListener("click", () => {
+      const tkr = getTicker();
+      // safer to use absolute path if served via Flask static
+      window.open(`/volume.html?ticker=${encodeURIComponent(tkr)}`, "_blank");
+    });
+  }
+
+  // initial news load
   loadNews();
 });
+
 
 
 

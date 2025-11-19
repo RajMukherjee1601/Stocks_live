@@ -1,4 +1,3 @@
-# app.py
 import os
 import math
 import warnings
@@ -916,11 +915,13 @@ from flask import request, jsonify                  # already present at top
 from pymongo import ASCENDING                       # already present
 
 # ... keep all existing code ...
-
 @app.route("/api/predictions/table", methods=["GET"])
 def api_predictions_table():
     """
-    Returns a flat table of predictions + actual close for a given ticker.
+    Returns a flat table of predictions + 'actual' price for a given ticker.
+
+    - 'Actual Close' in the output is the Yahoo Finance **Open** price
+      for the nearest 5-minute bar to the prediction timestamp.
 
     Query params:
       ticker = e.g. RELIANCE.NS (required)
@@ -935,13 +936,15 @@ def api_predictions_table():
     except Exception:
         limit = 20
 
-    # 1) Read latest prediction documents from Mongo
-    docs = mongo.db.predictions.find(
-        {"ticker": ticker}
-    ).sort("generated_at", -1).limit(limit)
+    # 1) Load recent prediction documents from MongoDB
+    docs = list(
+        mongo.db.predictions.find({"ticker": ticker})
+        .sort("generated_at", -1)
+        .limit(limit)
+    )
 
-    raw_rows = []      # temp rows with dt object
-    pred_times = []    # list of datetime (UTC) for all prediction timestamps
+    raw_rows = []
+    pred_times = []
 
     for doc in docs:
         gen_at = doc.get("generated_at")
@@ -955,19 +958,22 @@ def api_predictions_table():
             if not ts_str:
                 continue
 
-            # Parse prediction timestamp (assume UTC / convert to UTC)
+            # Parse prediction timestamp (assume / convert to UTC)
             dt_pred_utc = None
             try:
-                dt_tmp = datetime.fromisoformat(ts_str)
-                if dt_tmp.tzinfo is None:
-                    dt_tmp = dt_tmp.replace(tzinfo=timezone.utc)
-                dt_pred_utc = dt_tmp.astimezone(timezone.utc)
+                dt_parsed = datetime.fromisoformat(ts_str)
+                if dt_parsed.tzinfo is None:
+                    dt_pred_utc = dt_parsed.replace(tzinfo=timezone.utc)
+                else:
+                    dt_pred_utc = dt_parsed.astimezone(timezone.utc)
             except Exception:
                 dt_pred_utc = None
 
             predicted_close = p.get("predicted_close")
-            if predicted_close is not None:
-                predicted_close = float(predicted_close)
+            try:
+                predicted_close = float(predicted_close) if predicted_close is not None else None
+            except Exception:
+                predicted_close = None
 
             raw_rows.append({
                 "ticker": ticker,
@@ -985,16 +991,18 @@ def api_predictions_table():
         return jsonify({"ok": True, "ticker": ticker, "rows": []})
 
     # 2) Fetch actual prices from yfinance for the whole prediction window
+    #    IMPORTANT: use 5-minute bars so history matches live.html.
     price_df = None
     if pred_times:
-        start = min(pred_times) - timedelta(hours=2)
-        end = max(pred_times) + timedelta(hours=2)
+        # A little padding on both sides
+        start = min(pred_times) - timedelta(minutes=10)
+        end = max(pred_times) + timedelta(minutes=10)
         try:
             df = yf.download(
                 tickers=[ticker],
                 start=start,
                 end=end,
-                interval="1h",
+                interval="5m",       # <-- 5-minute bars (same as live)
                 auto_adjust=False,
                 progress=False,
                 threads=False,
@@ -1005,7 +1013,9 @@ def api_predictions_table():
             if isinstance(df.columns, pd.MultiIndex):
                 df = df[ticker]
 
-            df = df[["Close"]].dropna()
+            # We only need Open, which we treat as the "actual" value
+            df = df[["Open"]].dropna()
+
             if not df.empty:
                 idx = df.index
                 if idx.tz is None:
@@ -1016,11 +1026,14 @@ def api_predictions_table():
         except Exception:
             price_df = None
 
-    # 3) For each prediction, find nearest yfinance bar (≤ 45 minutes difference)
+    # 3) For each prediction, find nearest 5-minute bar (≤ 10 minutes diff)
     final_rows = []
+    max_diff_sec = 10 * 60  # 10 minutes
+
     for r in raw_rows:
         dt_pred_utc = r.pop("dt_pred_utc", None)
         actual_close = None
+        actual_ts_iso = None
 
         if price_df is not None and dt_pred_utc is not None and not price_df.empty:
             nearest_ts = None
@@ -1032,11 +1045,16 @@ def api_predictions_table():
                     min_diff = diff_sec
                     nearest_ts = ts
 
-            # Only accept it if within 45 minutes
-            if nearest_ts is not None and min_diff <= 45 * 60:
-                actual_close = float(price_df.loc[nearest_ts, "Close"])
+            if nearest_ts is not None and min_diff <= max_diff_sec:
+                try:
+                    actual_close = float(price_df.loc[nearest_ts, "Open"])
+                    actual_ts_iso = nearest_ts.isoformat()
+                except Exception:
+                    actual_close = None
+                    actual_ts_iso = None
 
         r["actual_close"] = actual_close
+        r["actual_timestamp"] = actual_ts_iso
         final_rows.append(r)
 
     return jsonify({
@@ -1046,9 +1064,115 @@ def api_predictions_table():
     })
 
 
+
+
 @app.route("/history")
 def serve_history_page():
     return app.send_static_file("history.html")
+
+
+
+@app.route("/volume.html")
+def volume_page():
+    # volume.html must sit in the folder used as static_folder ("templates" in your app)
+    return app.send_static_file("volume.html")
+
+
+@app.route("/api/volume/table")
+def api_volume_table():
+    """
+    Returns OHLC + volume rows for the given ticker / period / interval.
+    Delivery Volume ≈ 35% of Total Volume
+    Credit Volume  = Total Volume - Delivery Volume
+    """
+    ticker = (request.args.get("ticker") or "RELIANCE.NS").upper()
+    period = request.args.get("period", "5d")
+    interval = request.args.get("interval", "1h")
+
+    try:
+        df = yf.download(
+            tickers=ticker,
+            period=period,
+            interval=interval,
+            auto_adjust=False,
+            progress=False,
+        )
+    except Exception as e:
+        return jsonify(ok=False, error=f"yfinance error: {e}"), 500
+
+    if df is None or df.empty:
+        return jsonify(ok=False, error=f"No data for {ticker}"), 404
+
+    # Put the index into a column (Datetime / Date / etc.)
+    df = df.reset_index()
+
+    # Decide which column is timestamp
+    if "Datetime" in df.columns:
+        ts_col = "Datetime"
+    elif "Date" in df.columns:
+        ts_col = "Date"
+    elif "index" in df.columns:
+        ts_col = "index"
+    else:
+        ts_col = df.columns[0]
+
+    rows = []
+
+    def safe_float(value):
+        try:
+            if value is None:
+                return None
+            v = float(value)
+            if pd.isna(v):
+                return None
+            return v
+        except Exception:
+            return None
+
+    for _, row in df.iterrows():
+        # ---- timestamp ----
+        ts_val = row[ts_col]
+        ts_iso = None
+        try:
+            ts = pd.to_datetime(ts_val)
+            ts_iso = ts.isoformat()
+        except Exception:
+            ts_iso = None
+
+        # ---- prices ----
+        open_px = safe_float(row.get("Open"))
+        close_px = safe_float(row.get("Close"))
+
+        # ---- volume + derived columns ----
+        vol_val = safe_float(row.get("Volume"))
+        if vol_val is not None:
+            total_volume = int(round(vol_val))
+            delivery_volume = int(round(total_volume * 0.35))   # 35% of total
+            credit_volume = total_volume - delivery_volume      # remainder
+        else:
+            total_volume = None
+            delivery_volume = None
+            credit_volume = None
+
+        rows.append(
+            {
+                "timestamp": ts_iso,
+                "open": open_px,
+                "close": close_px,
+                "total_volume": total_volume,
+                "credit_volume": credit_volume,
+                "delivery_volume": delivery_volume,
+            }
+        )
+
+    return jsonify(
+        ok=True,
+        ticker=ticker,
+        period=period,
+        interval=interval,
+        rows=rows,
+    )
+
 
 
 if __name__ == "__main__":
