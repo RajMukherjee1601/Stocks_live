@@ -1070,109 +1070,88 @@ def api_predictions_table():
 def serve_history_page():
     return app.send_static_file("history.html")
 
-
-
-@app.route("/volume.html")
-def volume_page():
-    # volume.html must sit in the folder used as static_folder ("templates" in your app)
-    return app.send_static_file("volume.html")
-
-
-@app.route("/api/volume/table")
+@app.route("/api/volume_table", methods=["GET"])
 def api_volume_table():
     """
-    Returns OHLC + volume rows for the given ticker / period / interval.
-    Delivery Volume ≈ 35% of Total Volume
-    Credit Volume  = Total Volume - Delivery Volume
+    Return last N calendar days of daily volume for a ticker.
+
+    Query params:
+      ticker = symbol like RELIANCE.NS (required)
+      days   = number of days (default: 5)
+
+    Response:
+      {
+        ok: True/False,
+        ticker: "...",
+        days: 5,
+        rows: [
+          {
+            date: "2025-11-18",
+            total_volume: 12345678,
+            delivery_volume: null,   # placeholder
+            credit_volume: null      # placeholder
+          },
+          ...
+        ]
+      }
     """
-    ticker = (request.args.get("ticker") or "RELIANCE.NS").upper()
-    period = request.args.get("period", "5d")
-    interval = request.args.get("interval", "1h")
+    ticker = (request.args.get("ticker") or "").strip()
+    if not ticker:
+        return jsonify({"ok": False, "error": "ticker is required"}), 400
+
+    # default = 5 days
+    try:
+        days = int(request.args.get("days", "5"))
+    except ValueError:
+        days = 5
+    days = max(1, min(days, 30))  # clamp 1–30 just to be safe
 
     try:
+        # pull a bit extra to cover weekends/holidays
+        lookback = max(days + 3, 10)
         df = yf.download(
-            tickers=ticker,
-            period=period,
-            interval=interval,
-            auto_adjust=False,
+            ticker,
+            period=f"{lookback}d",
+            interval="1d",
             progress=False,
+            auto_adjust=False,
         )
+
+        if df.empty:
+            return jsonify({"ok": False, "error": "No daily data from yfinance"}), 404
+
+        # keep only rows with volume, take last `days` trading days
+        df = df[~df["Volume"].isna()].tail(days)
+
+        rows = []
+        for dt, row in df.iterrows():
+            # `dt` is a Timestamp
+            d = dt.date().isoformat()
+            vol = int(row["Volume"]) if not math.isnan(row["Volume"]) else 0
+            rows.append({
+                "date": d,
+                "total_volume": vol,
+                # NOTE: Yahoo does NOT give delivery vs intraday split.
+                # These are placeholders; you can wire NSE bhavcopy later.
+                "delivery_volume": None,
+                "credit_volume": None,
+            })
+
+        return jsonify({
+            "ok": True,
+            "ticker": ticker.upper(),
+            "days": days,
+            "rows": rows,
+        })
+
     except Exception as e:
-        return jsonify(ok=False, error=f"yfinance error: {e}"), 500
+        return jsonify({"ok": False, "error": str(e)}), 500
 
-    if df is None or df.empty:
-        return jsonify(ok=False, error=f"No data for {ticker}"), 404
 
-    # Put the index into a column (Datetime / Date / etc.)
-    df = df.reset_index()
 
-    # Decide which column is timestamp
-    if "Datetime" in df.columns:
-        ts_col = "Datetime"
-    elif "Date" in df.columns:
-        ts_col = "Date"
-    elif "index" in df.columns:
-        ts_col = "index"
-    else:
-        ts_col = df.columns[0]
-
-    rows = []
-
-    def safe_float(value):
-        try:
-            if value is None:
-                return None
-            v = float(value)
-            if pd.isna(v):
-                return None
-            return v
-        except Exception:
-            return None
-
-    for _, row in df.iterrows():
-        # ---- timestamp ----
-        ts_val = row[ts_col]
-        ts_iso = None
-        try:
-            ts = pd.to_datetime(ts_val)
-            ts_iso = ts.isoformat()
-        except Exception:
-            ts_iso = None
-
-        # ---- prices ----
-        open_px = safe_float(row.get("Open"))
-        close_px = safe_float(row.get("Close"))
-
-        # ---- volume + derived columns ----
-        vol_val = safe_float(row.get("Volume"))
-        if vol_val is not None:
-            total_volume = int(round(vol_val))
-            delivery_volume = int(round(total_volume * 0.35))   # 35% of total
-            credit_volume = total_volume - delivery_volume      # remainder
-        else:
-            total_volume = None
-            delivery_volume = None
-            credit_volume = None
-
-        rows.append(
-            {
-                "timestamp": ts_iso,
-                "open": open_px,
-                "close": close_px,
-                "total_volume": total_volume,
-                "credit_volume": credit_volume,
-                "delivery_volume": delivery_volume,
-            }
-        )
-
-    return jsonify(
-        ok=True,
-        ticker=ticker,
-        period=period,
-        interval=interval,
-        rows=rows,
-    )
-
+@app.route("/volume")
+def serve_volume_page():
+    return app.send_static_file("volume.html")
 
 
 if __name__ == "__main__":
