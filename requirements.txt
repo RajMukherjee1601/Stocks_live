@@ -7,3 +7,5 @@ scikit-learn~=1.7.1
 flask-cors
 flask-pymongo
 gunicorn
+nselib
+pandas-market-calendars
