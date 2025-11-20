@@ -523,9 +523,10 @@ const predict = async () => {
 if (volBtn) {
   volBtn.addEventListener("click", () => {
     const tkr = getTicker();
-    window.open(`/volume?ticker=${encodeURIComponent(tkr)}`, "_blank");
+    window.open(`/volume.html?ticker=${encodeURIComponent(tkr)}`, "_blank");
   });
 }
+
 
 
   // initial news load

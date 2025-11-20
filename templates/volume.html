@@ -2,28 +2,52 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Volume Table — Last 5 Days</title>
+  <title>Volume Table — Last 3 Years</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-50 text-slate-900">
-  <div class="max-w-4xl mx-auto p-6">
-    <header class="mb-6">
-      <h1 class="text-2xl font-extrabold tracking-tight">Volume Table (Last 5 Days)</h1>
-      <p class="text-slate-600 mt-1" id="subtitle">Loading ticker…</p>
+  <div class="max-w-6xl mx-auto p-6">
+    <!-- Header + Controls -->
+    <header class="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight">
+          Volume Table (Last 3 Years)
+        </h1>
+        <p class="text-slate-600 mt-1" id="subtitle">
+          Select a ticker to view 3 years of daily volume data.
+        </p>
+      </div>
+
+      <!-- Ticker dropdown + reload button -->
+      <div class="flex flex-col md:flex-row gap-3 items-start md:items-end">
+        <label class="w-full md:w-auto">
+          <span class="block text-sm font-medium text-slate-700">Ticker (NSE)</span>
+          <select id="tickerSelect"
+                  class="mt-1 block w-64 rounded-xl border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-3 py-2"></select>
+        </label>
+
+        <button id="btnReload"
+                class="rounded-xl bg-slate-900 text-white px-4 py-2 shadow hover:bg-slate-800 active:scale-[.99]">
+          Reload Volume
+        </button>
+      </div>
     </header>
 
-    <div id="statusBox" class="hidden mb-4"></div>
+    <!-- Status / Toast -->
+    <section id="statusBox" class="hidden mb-4" aria-live="polite"></section>
 
-    <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="text-lg font-semibold">Daily Volumes</h2>
+    <!-- Main Card -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div class="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <h2 class="text-lg font-semibold">Daily Volumes (3 Years)</h2>
         <div class="text-xs text-slate-500">
-          Data source: Yahoo Finance (Total Volume)
+          Data source: <code>/api/volume_table?ticker=…&period=3Y</code>
         </div>
       </div>
 
-      <div class="overflow-x-auto">
+      <div class="overflow-x-auto max-h-[70vh]">
         <table class="min-w-full text-sm">
           <thead>
             <tr class="border-b border-slate-200 bg-slate-50">
@@ -31,26 +55,90 @@
               <th class="px-3 py-2 text-right font-semibold">Total Volume</th>
               <th class="px-3 py-2 text-right font-semibold">Delivery Volume</th>
               <th class="px-3 py-2 text-right font-semibold">Credit Volume</th>
+              <th class="px-3 py-2 text-right font-semibold">Delivery %</th>
             </tr>
           </thead>
           <tbody id="volumeTbody"></tbody>
         </table>
       </div>
 
-      <p class="mt-4 text-xs text-slate-500">
-        Note: Delivery vs credit volume requires NSE end-of-day data.
-        For now, only total traded volume is shown.
+      <p class="mt-4 text-xs text-slate-500 leading-relaxed">
+        <strong>Notes:</strong><br />
+        • <span class="font-medium">Total Volume</span> is the total traded quantity for the day (NSE: TotalTradedQuantity).<br />
+        • <span class="font-medium">Delivery Volume</span> is the quantity taken into demat (NSE: DeliverableQty).<br />
+        • <span class="font-medium">Credit Volume</span> ≈ Total Volume − Delivery Volume (intraday / non-delivery).<br />
+        • <span class="font-medium">Delivery %</span> = (Delivery Volume ÷ Total Volume) × 100.<br />
+        • If volumes show “—”, check your <code>/api/volume_table</code> response in the browser.
       </p>
-    </div>
+    </section>
   </div>
 
   <script>
+    // Same API base logic as index.html:
     const API_BASE = /^http(s)?:\/\//.test(location.origin) ? "" : "http://localhost:5000";
     const $ = (sel) => document.querySelector(sel);
+
+    // Same NSE watchlist as the main dashboard:
+    const STOCKS = {
+      "Reliance Industries (RELIANCE.NS)": "RELIANCE.NS",
+      "TCS (TCS.NS)": "TCS.NS",
+      "HDFC Bank (HDFCBANK.NS)": "HDFCBANK.NS",
+      "ICICI Bank (ICICIBANK.NS)": "ICICIBANK.NS",
+      "Infosys (INFY.NS)": "INFY.NS",
+      "ITC (ITC.NS)": "ITC.NS",
+      "State Bank of India (SBIN.NS)": "SBIN.NS",
+      "Bharti Airtel (BHARTIARTL.NS)": "BHARTIARTL.NS",
+      "Hindustan Unilever (HINDUNILVR.NS)": "HINDUNILVR.NS",
+      "Larsen & Toubro (LT.NS)": "LT.NS",
+      "Axis Bank (AXISBANK.NS)": "AXISBANK.NS",
+      "Kotak Mahindra Bank (KOTAKBANK.NS)": "KOTAKBANK.NS",
+      "Bajaj Finance (BAJFINANCE.NS)": "BAJFINANCE.NS",
+      "Bajaj Finserv (BAJAJFINSV.NS)": "BAJAJFINSV.NS",
+      "Adani Enterprises (ADANIENT.NS)": "ADANIENT.NS",
+      "Adani Ports (ADANIPORTS.NS)": "ADANIPORTS.NS",
+      "Maruti Suzuki (MARUTI.NS)": "MARUTI.NS",
+      "Sun Pharma (SUNPHARMA.NS)": "SUNPHARMA.NS",
+      "Asian Paints (ASIANPAINT.NS)": "ASIANPAINT.NS",
+      "Mahindra & Mahindra (M&M.NS)": "M&M.NS",
+      "Tata Motors (TATAMOTORS.NS)": "TATAMOTORS.NS",
+      "NTPC (NTPC.NS)": "NTPC.NS",
+      "Power Grid (POWERGRID.NS)": "POWERGRID.NS",
+      "UltraTech Cement (ULTRACEMCO.NS)": "ULTRACEMCO.NS",
+      "JSW Steel (JSWSTEEL.NS)": "JSWSTEEL.NS",
+      "Tata Steel (TATASTEEL.NS)": "TATASTEEL.NS",
+      "Nestlé India (NESTLEIND.NS)": "NESTLEIND.NS",
+      "Titan (TITAN.NS)": "TITAN.NS",
+      "Tech Mahindra (TECHM.NS)": "TECHM.NS",
+      "Wipro (WIPRO.NS)": "WIPRO.NS",
+      "Grasim (GRASIM.NS)": "GRASIM.NS",
+      "Cipla (CIPLA.NS)": "CIPLA.NS",
+      "Divi's Laboratories (DIVISLAB.NS)": "DIVISLAB.NS",
+      "Dr. Reddy's (DRREDDY.NS)": "DRREDDY.NS",
+      "Britannia (BRITANNIA.NS)": "BRITANNIA.NS",
+      "Eicher Motors (EICHERMOT.NS)": "EICHERMOT.NS",
+      "Hero MotoCorp (HEROMOTOCO.NS)": "HEROMOTOCO.NS",
+      "Bajaj Auto (BAJAJ-AUTO.NS)": "BAJAJ-AUTO.NS",
+      "Tata Consumer (TATACONSUM.NS)": "TATACONSUM.NS",
+      "HDFC Life (HDFCLIFE.NS)": "HDFCLIFE.NS",
+      "SBI Life (SBILIFE.NS)": "SBILIFE.NS",
+      "ICICI Lombard (ICICIGI.NS)": "ICICIGI.NS",
+      "Hindalco (HINDALCO.NS)": "HINDALCO.NS",
+      "Coal India (COALINDIA.NS)": "COALINDIA.NS",
+      "ONGC (ONGC.NS)": "ONGC.NS",
+      "IndusInd Bank (INDUSINDBK.NS)": "INDUSINDBK.NS",
+      "UPL (UPL.NS)": "UPL.NS",
+      "Shree Cement (SHREECEM.NS)": "SHREECEM.NS",
+      "Tata Power (TATAPOWER.NS)": "TATAPOWER.NS"
+    };
 
     const fmtInt = (v) => {
       if (v === null || v === undefined || isNaN(v)) return "—";
       return Number(v).toLocaleString();
+    };
+
+    const fmtPct = (num, den) => {
+      if (!num || !den || isNaN(num) || isNaN(den) || den === 0) return "—";
+      return ((num / den) * 100).toFixed(2) + "%";
     };
 
     function getQueryParam(name, fallback = null) {
@@ -64,6 +152,7 @@
       const palette = {
         info: "bg-sky-50 border-sky-200 text-sky-900",
         success: "bg-emerald-50 border-emerald-200 text-emerald-900",
+        warn: "bg-amber-50 border-amber-200 text-amber-900",
         error: "bg-rose-50 border-rose-200 text-rose-900"
       };
       box.className = base + " " + (palette[type] || palette.info);
@@ -71,17 +160,63 @@
       box.classList.remove("hidden");
     }
 
+    function clearStatus() {
+      const box = $("#statusBox");
+      box.classList.add("hidden");
+      box.textContent = "";
+    }
+
+    function buildTickerDropdown() {
+      const sel = $("#tickerSelect");
+      sel.innerHTML = "";
+      for (const [label, symbol] of Object.entries(STOCKS)) {
+        const opt = document.createElement("option");
+        opt.value = symbol;
+        opt.textContent = label;
+        sel.appendChild(opt);
+      }
+
+      // If ticker came via query param, pre-select it
+      const paramTicker = getQueryParam("ticker");
+      if (paramTicker && Object.values(STOCKS).includes(paramTicker)) {
+        sel.value = paramTicker;
+      } else {
+        sel.value = "RELIANCE.NS";
+      }
+    }
+
+    function getTicker() {
+      const sel = $("#tickerSelect");
+      return sel && sel.value ? sel.value : "RELIANCE.NS";
+    }
+
+    function renderEmpty() {
+      const tbody = $("#volumeTbody");
+      if (!tbody) return;
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="px-3 py-3 text-center text-slate-500">
+            No data to display.
+          </td>
+        </tr>
+      `;
+    }
+
     async function loadVolumeTable() {
-      const ticker = getQueryParam("ticker", "RELIANCE.NS");
-      $("#subtitle").textContent = `Ticker: ${ticker} — last 5 trading days`;
+      const ticker = getTicker();
+      $("#subtitle").textContent = `Ticker: ${ticker} — last 3 years (daily data)`;
 
       try {
-        const url = `${API_BASE}/api/volume_table?ticker=${encodeURIComponent(ticker)}&days=5`;
+        clearStatus();
+        const url = `${API_BASE}/api/volume_table?ticker=${encodeURIComponent(ticker)}&period=3Y`;
         const res = await fetch(url);
+
+        // If backend returns HTML error page, this will throw before j.ok
         const j = await res.json();
 
-        if (!j.ok) {
-          setStatus(j.error || "API error loading volume table", "error");
+        if (!res.ok || !j.ok) {
+          setStatus(j.error || "API error while loading volume table.", "error");
+          renderEmpty();
           return;
         }
 
@@ -89,35 +224,57 @@
         tbody.innerHTML = "";
 
         if (!j.rows || !j.rows.length) {
-          tbody.innerHTML = `
-            <tr>
-              <td colspan="4" class="px-3 py-3 text-center text-slate-500">
-                No volume data available.
-              </td>
-            </tr>`;
+          renderEmpty();
+          setStatus("No volume data available for the requested ticker.", "info");
           return;
         }
 
-        j.rows.forEach(row => {
+        // Sort by date ascending just in case
+        const rows = [...j.rows].sort((a, b) => {
+          if (!a.date || !b.date) return 0;
+          return a.date.localeCompare(b.date);
+        });
+
+        rows.forEach(row => {
           const tr = document.createElement("tr");
           tr.className = "border-b border-slate-100 hover:bg-slate-50";
+
+          const total = row.total_volume ?? row.totalVolume;
+          const delivery = row.delivery_volume ?? row.deliveryVolume;
+          const credit = row.credit_volume ?? row.creditVolume;
+
           tr.innerHTML = `
             <td class="px-3 py-2">${row.date}</td>
-            <td class="px-3 py-2 text-right font-medium">${fmtInt(row.total_volume)}</td>
-            <td class="px-3 py-2 text-right text-slate-400">—</td>
-            <td class="px-3 py-2 text-right text-slate-400">—</td>
+            <td class="px-3 py-2 text-right font-medium">${fmtInt(total)}</td>
+            <td class="px-3 py-2 text-right font-medium">${fmtInt(delivery)}</td>
+            <td class="px-3 py-2 text-right font-medium">${fmtInt(credit)}</td>
+            <td class="px-3 py-2 text-right text-slate-700">${fmtPct(delivery, total)}</td>
           `;
           tbody.appendChild(tr);
         });
 
-        setStatus("Loaded volume data successfully.", "success");
+        setStatus(`Loaded ${rows.length.toLocaleString()} daily rows for ${ticker}.`, "success");
       } catch (err) {
         console.error(err);
         setStatus("Failed to load volume data: " + err.message, "error");
+        renderEmpty();
       }
     }
 
-    document.addEventListener("DOMContentLoaded", loadVolumeTable);
+    document.addEventListener("DOMContentLoaded", () => {
+      buildTickerDropdown();
+      loadVolumeTable();
+
+      const sel = $("#tickerSelect");
+      if (sel) {
+        sel.addEventListener("change", loadVolumeTable);
+      }
+
+      const btn = $("#btnReload");
+      if (btn) {
+        btn.addEventListener("click", loadVolumeTable);
+      }
+    });
   </script>
 </body>
 </html>

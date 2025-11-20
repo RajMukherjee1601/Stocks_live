@@ -1070,88 +1070,143 @@ def api_predictions_table():
 def serve_history_page():
     return app.send_static_file("history.html")
 
+from nselib import capital_market  # ⬅️ add near other imports (top of file)
+import pandas as pd
+import math
+
+from datetime import date, timedelta
+import pandas as pd
+from nselib import capital_market
+
 @app.route("/api/volume_table", methods=["GET"])
 def api_volume_table():
     """
-    Return last N calendar days of daily volume for a ticker.
+    Return daily volume data for a ticker using NSE (nselib), over a
+    date range computed from the requested 'period' or 'years'.
 
     Query params:
-      ticker = symbol like RELIANCE.NS (required)
-      days   = number of days (default: 5)
+      ticker = e.g. RELIANCE.NS  (required)
+      period = like '3Y', '2Y', '1Y' (optional, default '3Y')
+               ONLY used by *our* code; we DO NOT forward this to nselib.
+      years  = integer years (optional, overrides period if present)
 
     Response:
       {
-        ok: True/False,
-        ticker: "...",
-        days: 5,
-        rows: [
+        "ok": true,
+        "ticker": "RELIANCE.NS",
+        "years": 3,
+        "from_date": "20-11-2022",
+        "to_date": "20-11-2025",
+        "rows": [
           {
-            date: "2025-11-18",
-            total_volume: 12345678,
-            delivery_volume: null,   # placeholder
-            credit_volume: null      # placeholder
+            "date": "2025-11-18",
+            "total_volume": 12345678,
+            "delivery_volume": 2345678,
+            "credit_volume": 10000000
           },
           ...
         ]
       }
     """
-    ticker = (request.args.get("ticker") or "").strip()
+    ticker = (request.args.get("ticker") or "").strip().upper()
     if not ticker:
         return jsonify({"ok": False, "error": "ticker is required"}), 400
 
-    # default = 5 days
-    try:
-        days = int(request.args.get("days", "5"))
-    except ValueError:
-        days = 5
-    days = max(1, min(days, 30))  # clamp 1–30 just to be safe
+    # NSE symbol is plain RELIANCE, HDFCBANK, SBIN, etc.
+    symbol = ticker.split(".")[0]
+
+    # 1️⃣ Determine how many years of data to fetch
+    # Try ?period=3Y / 2Y style first
+    period_param = (request.args.get("period") or "").strip().upper()
+    years = None
+    if period_param.endswith("Y"):
+        try:
+            years = int(period_param[:-1])
+        except ValueError:
+            years = None
+
+    # If not given / invalid, fall back to explicit ?years= param
+    if years is None:
+        try:
+            years = int(request.args.get("years", "3"))
+        except ValueError:
+            years = 3
+
+    # Clamp between 1 and 5 years just to keep it reasonable
+    years = max(1, min(years, 5))
+
+    # 2️⃣ Build from_date / to_date for nselib (format: dd-mm-YYYY)
+    today = date.today()
+    start_date = today - timedelta(days=years * 365)  # approx N years
+    from_str = start_date.strftime("%d-%m-%Y")
+    to_str = today.strftime("%d-%m-%Y")
 
     try:
-        # pull a bit extra to cover weekends/holidays
-        lookback = max(days + 3, 10)
-        df = yf.download(
-            ticker,
-            period=f"{lookback}d",
-            interval="1d",
-            progress=False,
-            auto_adjust=False,
+        # 3️⃣ Call NSE using explicit from/to dates.
+        #    IMPORTANT: we DO NOT pass period= here, to avoid the "3Y invalid" error.
+        df = capital_market.price_volume_and_deliverable_position_data(
+            symbol=symbol,
+            from_date=from_str,
+            to_date=to_str,
         )
 
-        if df.empty:
-            return jsonify({"ok": False, "error": "No daily data from yfinance"}), 404
+        if df is None or df.empty:
+            return jsonify({"ok": False, "error": "No NSE data"}), 404
 
-        # keep only rows with volume, take last `days` trading days
-        df = df[~df["Volume"].isna()].tail(days)
+        # Normalize column names
+        df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
+
+        # Convert Date to ISO (YYYY-MM-DD)
+        df["DateISO"] = pd.to_datetime(df["Date"], dayfirst=True).dt.date.astype(str)
+
+        def safe_int(val):
+            """Convert NaN / None / invalid to 0-safe int."""
+            if pd.isna(val):
+                return 0
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return 0
 
         rows = []
-        for dt, row in df.iterrows():
-            # `dt` is a Timestamp
-            d = dt.date().isoformat()
-            vol = int(row["Volume"]) if not math.isnan(row["Volume"]) else 0
+        for _, row in df.iterrows():
+            total_vol = safe_int(row.get("TotalTradedQuantity", 0))
+            deliv_vol = safe_int(row.get("DeliverableQty", 0))
+            credit_vol = max(total_vol - deliv_vol, 0)
+
             rows.append({
-                "date": d,
-                "total_volume": vol,
-                # NOTE: Yahoo does NOT give delivery vs intraday split.
-                # These are placeholders; you can wire NSE bhavcopy later.
-                "delivery_volume": None,
-                "credit_volume": None,
+                "date": row["DateISO"],
+                "total_volume": total_vol,
+                "delivery_volume": deliv_vol,
+                "credit_volume": credit_vol,
             })
+
+        # Sort by date ascending
+        rows.sort(key=lambda r: r["date"])
 
         return jsonify({
             "ok": True,
-            "ticker": ticker.upper(),
-            "days": days,
+            "ticker": ticker,
+            "years": years,
+            "from_date": from_str,
+            "to_date": to_str,
             "rows": rows,
-        })
+        }), 200
 
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        # Always return JSON on error so the frontend never gets HTML
+        return jsonify({"ok": False, "error": f"NSE error: {e}"}), 500
+
+
+
 
 
 
 @app.route("/volume")
+@app.route("/volume.html")
 def serve_volume_page():
     return app.send_static_file("volume.html")
+
 
 
 if __name__ == "__main__":
